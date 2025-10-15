@@ -18,7 +18,7 @@ dependencies = [
   "aind-behavior-vr-foraging@git+https://github.com/AllenNeuralDynamics/Aind.Behavior.VrForaging@v0.5.0",
   "contraqctor@git+https://github.com/AllenNeuralDynamics/contraqctor@v0.4.3",
   "pandas",
-  "numpy<2.0",
+  "numpy>=1.24",
   "jupyter",
   "dotmap",
   "matplotlib",
@@ -34,6 +34,11 @@ linters = [
     'codespell',
     'black',
     'flake8',
+]
+
+sbi-ddm = [
+	  'sbi',
+    'torch',
 ]
 
 [tool.setuptools.packages.find]
