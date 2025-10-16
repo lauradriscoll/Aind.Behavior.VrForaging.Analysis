@@ -82,7 +82,6 @@ class DDMSimulator:
                     trace['evidence'].append(evidence.item())
             
             
-            
             # Check threshold
             if evidence >= gap:
                 break
@@ -106,6 +105,6 @@ def create_ddm_prior():
     from sbi.utils.torchutils import BoxUniform
     
     return BoxUniform(
-        low=torch.tensor([-1.0, 1.0, 0.0]),
-        high=torch.tensor([1.0, 5.0, 2.0])
+        low=torch.tensor([.1, 1, .1]),
+        high=torch.tensor([5.0, 1, 5.0])
     )
