@@ -26,25 +26,25 @@ class DDMSimulator:
     def simulate_single(self, theta: torch.Tensor, save_trace=False) -> torch.Tensor:
         """
         Args:
-            theta: [drift, gap, reward_pulse]
+            theta: [drift, reward_pulse]
             save_trace: If True, save evidence and event traces
             
         Returns:
             [time_in_patch, num_rewards] or trace dict if save_trace=True
         """
-        drift, gap, reward_pulse = theta
+        drift, reward_pulse = theta
         
         evidence = 0.0
         time = 0.0
         rewards = 0
-        
+        gap = 1.0 # Fixed gap
+
         if save_trace:
             trace = {
                 'times': [0.0],
                 'evidence': [0.0],
                 'reward_times': [],
                 'no_reward_times': [],
-                'gap': gap.item()
             }
         
         while time < self.max_time:
@@ -105,6 +105,6 @@ def create_ddm_prior():
     from sbi.utils.torchutils import BoxUniform
     
     return BoxUniform(
-        low=torch.tensor([.1, 1, .1]),
-        high=torch.tensor([5.0, 1, 5.0])
+        low=torch.tensor([.01, .01]), #drift, reward_pulse min
+        high=torch.tensor([2.0, 2.0]) #drift, reward_pulse max
     )
