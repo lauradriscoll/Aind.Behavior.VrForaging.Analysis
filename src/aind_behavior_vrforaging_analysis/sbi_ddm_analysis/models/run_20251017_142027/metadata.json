@@ -1,0 +1,26 @@
+{
+  "n_simulations": 50000,
+  "seed": 0,
+  "max_rewards": 21,
+  "timestamp": "20251017_142027",
+  "validation_results": {
+    "test_theta": [
+      [
+        0.6237261295318604,
+        0.9887983202934265
+      ]
+    ],
+    "synthetic": {
+      "time_mean": 2.135533094406128,
+      "time_std": 0.34812986850738525,
+      "rewards_mean": 0.8870000243186951,
+      "rewards_std": 0.5590559244155884
+    },
+    "real": {
+      "time_mean": 2.1804842948913574,
+      "time_std": 0.3475680947303772,
+      "rewards_mean": 0.9290000200271606,
+      "rewards_std": 0.5479591488838196
+    }
+  }
+}

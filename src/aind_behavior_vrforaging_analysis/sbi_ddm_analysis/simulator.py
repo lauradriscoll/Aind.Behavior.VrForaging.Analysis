@@ -12,7 +12,7 @@ class DDMSimulator:
     Evidence accumulates until threshold is reached.
     """
     
-    def __init__(self, initial_prob=0.8, decay_rate=-0.1, max_time=50.0, noise_std=0.3,
+    def __init__(self, initial_prob=0.8, decay_rate=-0.1, max_time=50.0, noise_std=0,
                  interval_mean=1.0, interval_std=0.3, interval_min=0.1, interval_max=5.0):
         self.initial_prob = initial_prob
         self.decay_rate = decay_rate
@@ -48,6 +48,7 @@ class DDMSimulator:
             }
         
         while time < self.max_time:
+            
             # Time to next site (truncated gaussian)
             dt = torch.clamp(
                 self.interval_mean + self.interval_std * torch.randn(1),
@@ -65,6 +66,10 @@ class DDMSimulator:
             if save_trace:
                 trace['times'].append(time)
                 trace['evidence'].append(evidence.item())
+
+            # Check threshold
+            if evidence >= gap:
+                break
             
             # Check reward probability based on number of rewards collected
             prob = reward_probability(rewards, self.initial_prob, self.decay_rate)
@@ -80,7 +85,6 @@ class DDMSimulator:
                     trace['no_reward_times'].append(time)
                     trace['times'].append(time)
                     trace['evidence'].append(evidence.item())
-            
             
             # Check threshold
             if evidence >= gap:
@@ -106,5 +110,5 @@ def create_ddm_prior():
     
     return BoxUniform(
         low=torch.tensor([.01, .01]), #drift, reward_pulse min
-        high=torch.tensor([2.0, 2.0]) #drift, reward_pulse max
+        high=torch.tensor([1.0, 1.0]) #drift, reward_pulse max
     )
