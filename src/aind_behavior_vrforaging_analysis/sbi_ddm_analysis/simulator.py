@@ -7,12 +7,15 @@ def reward_probability(num_rewards, initial_prob, decay_rate):
 
 class DDMSimulator:
     """
-    Simple DDM for patch foraging
+    DDM for patch foraging with observable offer acceptance decisions
     
-    Evidence accumulates until threshold is reached.
+    Evidence accumulates with drift until threshold (normalized to 1.0).
+    Sites probabilistically contain rewards.
+    When reward is obtained, evidence is pushed DOWN (away from threshold).
+    Agent visits sites until threshold is reached, then leaves.
     """
     
-    def __init__(self, initial_prob=0.8, decay_rate=-0.1, max_time=50.0, noise_std=0,
+    def __init__(self, initial_prob=0.8, decay_rate=-0.1, max_time=50.0, noise_std=0.0,
                  interval_mean=1.0, interval_std=0.3, interval_min=0.1, interval_max=5.0):
         self.initial_prob = initial_prob
         self.decay_rate = decay_rate
@@ -22,86 +25,136 @@ class DDMSimulator:
         self.interval_std = interval_std
         self.interval_min = interval_min
         self.interval_max = interval_max
+        self.threshold = 1.0  # Normalized threshold
     
-    def simulate_single(self, theta: torch.Tensor, save_trace=False) -> torch.Tensor:
+    def simulate_single(self, theta: torch.Tensor, save_trace=False):
         """
         Args:
-            theta: [drift, reward_pulse]
-            save_trace: If True, save evidence and event traces
+            theta: [drift, reward_bump] 
+                   drift: rate of evidence accumulation toward threshold
+                   reward_bump: amount evidence decreases when reward obtained
+            save_trace: If True, return full trajectory
             
         Returns:
-            [time_in_patch, num_rewards] or trace dict if save_trace=True
+            dict with:
+                'offer_times': when sites were visited
+                'rewards': 1=site had reward, 0=site was empty
+            or full trace if save_trace=True
         """
-        drift, reward_pulse = theta
+        drift, reward_bump = theta
         
         evidence = 0.0
         time = 0.0
-        rewards = 0
-        gap = 1.0 # Fixed gap
-
+        num_rewards_collected = 0
+        
+        offer_times = []
+        rewards = []    # 1 = site had reward, 0 = site was empty
+        
         if save_trace:
             trace = {
                 'times': [0.0],
                 'evidence': [0.0],
-                'reward_times': [],
-                'no_reward_times': [],
+                'offer_times': [],
+                'rewards': [],
+                'rewarded_times': [],
+                'empty_times': []
             }
         
         while time < self.max_time:
-            
-            # Time to next site (truncated gaussian)
+            # Time to next site (truncated normal)
             dt = torch.clamp(
                 self.interval_mean + self.interval_std * torch.randn(1),
                 min=self.interval_min, 
                 max=self.interval_max
             ).item()
+            
             time += dt
             
             if time >= self.max_time:
                 break
-
-            # Update evidence
-            evidence += (drift + torch.randn(1).item() * self.noise_std)*dt
+            
+            # Accumulate evidence with drift (and optional noise)
+            evidence += drift * dt
+            if self.noise_std > 0:
+                evidence += self.noise_std * torch.randn(1).item() * np.sqrt(dt)
             
             if save_trace:
                 trace['times'].append(time)
-                trace['evidence'].append(evidence.item())
-
-            # Check threshold
-            if evidence >= gap:
+                trace['evidence'].append(evidence)
+            
+            # Check threshold - if reached, leave without checking this site
+            if evidence >= self.threshold:
                 break
             
-            # Check reward probability based on number of rewards collected
-            prob = reward_probability(rewards, self.initial_prob, self.decay_rate)
-            if torch.rand(1) < prob:
-                rewards += 1
+            # Agent checks site for reward
+            offer_times.append(time)
+            
+            # Check if site has reward (probabilistic)
+            prob = reward_probability(num_rewards_collected, self.initial_prob, self.decay_rate)
+            has_reward = (torch.rand(1) < prob).item()
+            rewards.append(int(has_reward))
+            
+            if has_reward:
+                num_rewards_collected += 1
+                evidence -= reward_bump  # Evidence pushed back down
+                
                 if save_trace:
-                    trace['reward_times'].append(time)
-                    evidence += -reward_pulse
-                    trace['times'].append(time)
-                    trace['evidence'].append(evidence.item())
+                    trace['rewarded_times'].append(time)
             else:
                 if save_trace:
-                    trace['no_reward_times'].append(time)
-                    trace['times'].append(time)
-                    trace['evidence'].append(evidence.item())
+                    trace['empty_times'].append(time)
             
-            # Check threshold
-            if evidence >= gap:
+            if save_trace:
+                trace['offer_times'].append(time)
+                trace['rewards'].append(int(has_reward))
+                trace['times'].append(time)
+                trace['evidence'].append(evidence)
+            
+            # Check threshold again after potential reward bump
+            if evidence >= self.threshold:
                 break
         
         if save_trace:
             trace['final_time'] = time
-            trace['total_rewards'] = rewards
+            trace['total_rewards'] = num_rewards_collected
+            trace['total_sites'] = len(offer_times)
             return trace
         
-        return torch.tensor([time, rewards], dtype=torch.float32)
+        return {
+            'offer_times': torch.tensor(offer_times, dtype=torch.float32),
+            'rewards': torch.tensor(rewards, dtype=torch.float32)
+        }
     
-    def __call__(self, theta: torch.Tensor) -> torch.Tensor:
+    def simulate_batch(self, theta: torch.Tensor, n_trials_per_param=10):
+        """
+        Simulate multiple trials for each parameter setting
+        
+        Args:
+            theta: [batch_size, 2] or [2] - parameters [drift, reward_bump]
+            n_trials_per_param: number of trials to simulate per parameter setting
+            
+        Returns:
+            list of trial dicts (if single param) or list of lists (if batch)
+        """
         if theta.dim() == 1:
-            return self.simulate_single(theta)
+            # Single parameter setting - simulate n_trials
+            trials = []
+            for _ in range(n_trials_per_param):
+                trials.append(self.simulate_single(theta))
+            return trials
         else:
-            return torch.stack([self.simulate_single(theta[i]) for i in range(theta.shape[0])])
+            # Batch of parameter settings
+            all_trials = []
+            for i in range(theta.shape[0]):
+                batch_trials = []
+                for _ in range(n_trials_per_param):
+                    batch_trials.append(self.simulate_single(theta[i]))
+                all_trials.append(batch_trials)
+            return all_trials
+    
+    def __call__(self, theta: torch.Tensor, n_trials=10):
+        """For sbi compatibility"""
+        return self.simulate_batch(theta, n_trials_per_param=n_trials)
 
 
 def create_ddm_prior():
@@ -109,6 +162,6 @@ def create_ddm_prior():
     from sbi.utils.torchutils import BoxUniform
     
     return BoxUniform(
-        low=torch.tensor([.01, .01]), #drift, reward_pulse min
-        high=torch.tensor([1.0, 1.0]) #drift, reward_pulse max
+        low=torch.tensor([0.01, 0.01]),   # [drift_min, reward_bump_min]
+        high=torch.tensor([0.5, 0.5])     # [drift_max, reward_bump_max]
     )

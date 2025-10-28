@@ -17,6 +17,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
+from sbi.neural_nets import likelihood_nn
 
 from sbi.inference import MNLE
 from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import DDMSimulator, create_ddm_prior
@@ -69,7 +70,7 @@ def compute_max_rewards(simulator, prior, n_batches=10, batch_size=1000):
     return max_rewards
 
 
-def generate_training_data(simulator, prior, n_simulations, max_rewards, seed=42):
+def generate_training_data(simulator, prior, n_simulations, seed=42):
     """
     Generate training data for MNLE.
     
@@ -77,7 +78,6 @@ def generate_training_data(simulator, prior, n_simulations, max_rewards, seed=42
         simulator: DDMSimulator instance
         prior: Prior distribution
         n_simulations: Number of simulations to generate
-        max_rewards: Maximum reward count (for clamping)
         seed: Random seed for reproducibility
         
     Returns:
@@ -93,36 +93,19 @@ def generate_training_data(simulator, prior, n_simulations, max_rewards, seed=42
     # Run simulations
     x = torch.stack([simulator(theta[i]) for i in range(n_simulations)])
     
-    # Clamp rewards to prevent index out of bounds errors during training
-    n_exceeding = (x[:, 1] > max_rewards).sum().item()
-    pct_exceeding = 100 * n_exceeding / len(x)
-    max_before_clamp = x[:, 1].max().item()
-
-    if n_exceeding > 0:
-        print(f"  WARNING: {n_exceeding}/{len(x)} samples ({pct_exceeding:.2f}%) exceed MAX_REWARDS={max_rewards}")
-        print(f"  Max value before clamping: {max_before_clamp:.1f}")
-
-    x[:, 1] = torch.clamp(x[:, 1], max=max_rewards)
-    
     print(f"Training data shapes: theta={theta.shape}, x={x.shape}")
     print(f"Time range: [{x[:, 0].min():.2f}, {x[:, 0].max():.2f}]")
     print(f"Rewards range: [{x[:, 1].min():.0f}, {x[:, 1].max():.0f}]")
     
-    clamping_info = {
-    'n_exceeding': n_exceeding,
-    'pct_exceeding': pct_exceeding,
-    'max_before_clamp': max_before_clamp if n_exceeding > 0 else max_rewards
-}
-    return theta, x, clamping_info
+    return theta, x
 
-def train_mnle_model(theta, x, max_rewards):
+def train_mnle_model(theta, x, prior):
     """
     Train MNLE model.
     
     Args:
         theta: Parameter samples
         x: Simulation outputs
-        max_rewards: Maximum reward count for validation
         
     Returns:
         estimator: Trained likelihood estimator
@@ -132,40 +115,28 @@ def train_mnle_model(theta, x, max_rewards):
     
     # Validate that training data covers the expected range
     unique_rewards = torch.unique(x[:, 1])
-    print(f"  Training data contains {len(unique_rewards)} unique reward values")
-    print(f"  Range: [{unique_rewards.min():.0f}, {unique_rewards.max():.0f}]")
-    print(f"  Expected max: {max_rewards}")
+    print(f"unique_rewards: {unique_rewards}")
+    print(f"len(unique_rewards): {len(unique_rewards)}")
+    print(f"num_categories being passed: {len(unique_rewards)+1}")
+    print(f"Actual range in data: {x[:, -1].min()} to {x[:, -1].max()}")
+    print(f"Unique values in x: {np.unique(x[:, -1])}")
+
+    # Before training, remap rewards to consecutive indices
+    unique_rewards_sorted = torch.sort(torch.unique(x[:, -1]))[0]
+    reward_to_index = {reward.item(): idx for idx, reward in enumerate(unique_rewards_sorted)}
+
+    # Remap the categorical column(s) in x
+    x_remapped = x.clone()
+    x_remapped[:, -1] = torch.tensor([reward_to_index[val.item()] for val in x[:, -1]])
+
+    # Now you have consecutive categories 0-20
+    num_categories = len(unique_rewards_sorted)  # = 21
+    estimator_builder = likelihood_nn(model="mnle", log_transform_x=True, num_categories=num_categories)
     
-    if unique_rewards.max() > max_rewards:
-        print(f"  WARNING: Data exceeds max_rewards! Clamping...")
-    x[:, 1] = torch.clamp(x[:, 1], max=max_rewards)
-    
-    # CRITICAL: Ensure ALL categories 0 to max_rewards appear at the START of the dataset
-    # This ensures they're in the training split when the network is built
-    all_categories = set(range(max_rewards + 1))
-    present_categories = set(unique_rewards.int().tolist())
-    missing_categories = all_categories - present_categories
-    
-    # Create samples for ALL categories at the beginning
-    category_samples_x = []
-    category_samples_theta = []
-    
-    for cat in range(max_rewards + 1):
-        # Use mean time and each category value
-        category_samples_x.append(torch.tensor([x[:, 0].mean(), float(cat)]))
-        # Use mean theta values
-        category_samples_theta.append(theta.mean(dim=0))
-    
-    # PREPEND these samples so they're guaranteed to be in training split
-    x = torch.cat([torch.stack(category_samples_x), x])
-    theta = torch.cat([torch.stack(category_samples_theta), theta])
-    
-    print(f"  Prepended {max_rewards + 1} category-representative samples")
-    print(f"  New data shapes: theta={theta.shape}, x={x.shape}")
-    print(f"  Categories now range: [0, {int(x[:, 1].max())}]")
-    
-    trainer = MNLE()
-    estimator = trainer.append_simulations(theta, x).train()
+    # Train MNLE and obtain MCMC-based posterior.
+    proposal=prior
+    trainer = MNLE(proposal, estimator_builder)
+    estimator = trainer.append_simulations(theta, x_remapped).train()
     print("Training completed!")
     
     return estimator, trainer
@@ -351,16 +322,14 @@ def main():
     
     # Setup
     simulator, prior = setup_ddm()
-    # max_rewards = compute_max_rewards(simulator, prior)
-    max_rewards = 25 #hard coded based on prior analysis to speed up training.
 
     # Generate training data
     theta, x = generate_training_data(
-        simulator, prior, args.n_simulations, max_rewards, seed=args.seed
+        simulator, prior, args.n_simulations, seed=args.seed
     )
     
     # Train model
-    estimator, trainer = train_mnle_model(theta, x, max_rewards)
+    estimator, trainer = train_mnle_model(theta, x, prior)
 
     # Validate
     val_results, synthetic_data, real_data = validate_emulator(
@@ -374,7 +343,6 @@ def main():
     metadata = {
         'n_simulations': args.n_simulations,
         'seed': args.seed,
-        'max_rewards': max_rewards,
         'timestamp': timestamp,
         'validation_results': val_results,
     }

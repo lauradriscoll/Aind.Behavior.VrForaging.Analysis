@@ -1,0 +1,13 @@
+{
+  "n_samples": 50000,
+  "run_idx": 1,
+  "seed": 1,
+  "max_rewards": 25,
+  "training_time": 194.5618541240692,
+  "clamping_info": {
+    "n_exceeding": 0,
+    "pct_exceeding": 0.0,
+    "max_before_clamp": 25
+  },
+  "timestamp": "2025-10-27T19:10:03.060880"
+}

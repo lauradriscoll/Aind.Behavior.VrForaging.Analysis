@@ -51,10 +51,9 @@ from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import DDMSimu
 # Configuration
 # ============================================================================
 
-TRAINING_SAMPLE_SIZES = [1000, 5000, 10000, 25000, 50000]
+TRAINING_SAMPLE_SIZES = [1000, 5000, 10000, 25000, 50000] #
 NUM_RUNS_PER_SIZE = 3
 TEST_TRIAL_SIZES = [10, 20, 30, 40]
-MAX_REWARDS = 25  # Hard-coded based on prior analysis
 NUM_POSTERIOR_SAMPLES = 1000
 PARAM_NAMES = ['drift', 'reward_pulse']
 
@@ -97,7 +96,7 @@ def train_all_models(output_dir, sample_sizes=TRAINING_SAMPLE_SIZES,
     # Train models
     for n_samples in sample_sizes:
         for run_idx in range(num_runs):
-            seed = base_seed + run_idx
+            seed = base_seed + run_idx + 1
             
             print(f"\n{'='*70}")
             print(f"Training: n_samples={n_samples}, run={run_idx+1}/{num_runs}, seed={seed}")
@@ -110,10 +109,10 @@ def train_all_models(output_dir, sample_sizes=TRAINING_SAMPLE_SIZES,
             
             # Generate training data
             start_time = time.time()
-            theta, x, clamping_info = generate_training_data(simulator, prior, n_samples, MAX_REWARDS, seed=seed)
+            theta, x = generate_training_data(simulator, prior, n_samples, seed=seed)
             
             # Train model
-            estimator, trainer = train_mnle_model(theta, x, MAX_REWARDS)
+            estimator, trainer = train_mnle_model(theta, x, prior)
             training_time = time.time() - start_time
             
             # Save model
@@ -130,9 +129,7 @@ def train_all_models(output_dir, sample_sizes=TRAINING_SAMPLE_SIZES,
                 'n_samples': n_samples,
                 'run_idx': run_idx,
                 'seed': seed,
-                'max_rewards': MAX_REWARDS,
                 'training_time': training_time,
-                'clamping_info': clamping_info,
                 'timestamp': datetime.now().isoformat()
             }
 
