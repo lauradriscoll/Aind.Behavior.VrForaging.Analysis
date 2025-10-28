@@ -94,14 +94,26 @@ def generate_training_data(simulator, prior, n_simulations, max_rewards, seed=42
     x = torch.stack([simulator(theta[i]) for i in range(n_simulations)])
     
     # Clamp rewards to prevent index out of bounds errors during training
+    n_exceeding = (x[:, 1] > max_rewards).sum().item()
+    pct_exceeding = 100 * n_exceeding / len(x)
+    max_before_clamp = x[:, 1].max().item()
+
+    if n_exceeding > 0:
+        print(f"  WARNING: {n_exceeding}/{len(x)} samples ({pct_exceeding:.2f}%) exceed MAX_REWARDS={max_rewards}")
+        print(f"  Max value before clamping: {max_before_clamp:.1f}")
+
     x[:, 1] = torch.clamp(x[:, 1], max=max_rewards)
     
     print(f"Training data shapes: theta={theta.shape}, x={x.shape}")
     print(f"Time range: [{x[:, 0].min():.2f}, {x[:, 0].max():.2f}]")
     print(f"Rewards range: [{x[:, 1].min():.0f}, {x[:, 1].max():.0f}]")
     
-    return theta, x
-
+    clamping_info = {
+    'n_exceeding': n_exceeding,
+    'pct_exceeding': pct_exceeding,
+    'max_before_clamp': max_before_clamp if n_exceeding > 0 else max_rewards
+}
+    return theta, x, clamping_info
 
 def train_mnle_model(theta, x, max_rewards):
     """
@@ -126,7 +138,31 @@ def train_mnle_model(theta, x, max_rewards):
     
     if unique_rewards.max() > max_rewards:
         print(f"  WARNING: Data exceeds max_rewards! Clamping...")
-        x[:, 1] = torch.clamp(x[:, 1], max=max_rewards)
+    x[:, 1] = torch.clamp(x[:, 1], max=max_rewards)
+    
+    # CRITICAL: Ensure ALL categories 0 to max_rewards appear at the START of the dataset
+    # This ensures they're in the training split when the network is built
+    all_categories = set(range(max_rewards + 1))
+    present_categories = set(unique_rewards.int().tolist())
+    missing_categories = all_categories - present_categories
+    
+    # Create samples for ALL categories at the beginning
+    category_samples_x = []
+    category_samples_theta = []
+    
+    for cat in range(max_rewards + 1):
+        # Use mean time and each category value
+        category_samples_x.append(torch.tensor([x[:, 0].mean(), float(cat)]))
+        # Use mean theta values
+        category_samples_theta.append(theta.mean(dim=0))
+    
+    # PREPEND these samples so they're guaranteed to be in training split
+    x = torch.cat([torch.stack(category_samples_x), x])
+    theta = torch.cat([torch.stack(category_samples_theta), theta])
+    
+    print(f"  Prepended {max_rewards + 1} category-representative samples")
+    print(f"  New data shapes: theta={theta.shape}, x={x.shape}")
+    print(f"  Categories now range: [0, {int(x[:, 1].max())}]")
     
     trainer = MNLE()
     estimator = trainer.append_simulations(theta, x).train()
