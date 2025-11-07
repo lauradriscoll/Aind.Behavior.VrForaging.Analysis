@@ -95,38 +95,83 @@ class PatchForagingDDM:
                 # Update evidence
                 evidence += -reward_bump if reward else failure_bump
                 num_rewards += reward
-        
-        return patch_data, global_time
+        total_time = global_time - patch_start_time
+        num_stops = len(patch_data)
+        summary_stats = torch.tensor([total_time, num_stops, num_rewards], dtype=torch.float32)
+    
+
+        return patch_data, global_time, summary_stats
     
     # ===== Main Interface =====
     
-    def simulate_trial(self, param_generator, window_sites: int) -> torch.Tensor:
+    def simulate_trial(self, param_generator, window_sites: int, return_aggregate: bool = False) -> tuple:
         """
         Simulate foraging trial with time-varying parameters.
         
         Args:
             param_generator: Iterator that yields theta values for each patch
             window_sites: Exact number of sites to return
+            return_aggregate: If True, return aggregate stats across patches.
+                            If False, return single-patch stats (only first patch).
         
         Returns:
-            (window_sites, 3) tensor [time_since_patch_start, reward, stopped]
+            data: (window_sites, 3) tensor [time_since_patch_start, reward, stopped]
+            summary_stats: (3,) for single patch OR (8,) for aggregate
         """
         data = []
+        patch_stats_list = []
         global_time = 0.0
         patch_start_time = 0.0
         
         for theta in param_generator:
-            patch_data, global_time = self._simulate_one_patch(theta, global_time, patch_start_time)
+            patch_data, global_time, summary_stats = self._simulate_one_patch(
+                theta, global_time, patch_start_time
+            )
+            
             data.extend(patch_data)
+            patch_stats_list.append(summary_stats)
             patch_start_time = global_time
             
             if len(data) >= window_sites:
-                break  # Guarantee exact size
+                break
         
-        return torch.tensor(data[:window_sites], dtype=torch.float32)
-    
-    # ===== Parameter Generators =====
-    
+        data_tensor = torch.tensor(data[:window_sites], dtype=torch.float32)
+        
+        if return_aggregate:
+            # Return aggregate statistics across all patches
+            patch_stats = torch.stack(patch_stats_list)  # (num_patches, 3)
+            
+            # Handle single patch case (std would be NaN)
+            if len(patch_stats) == 1:
+                aggregate_stats = torch.tensor([
+                    patch_stats[0, 0].item(),  # total_time (no mean needed)
+                    0.0,                        # std total_time = 0 for single patch
+                    patch_stats[0, 1].item(),  # num_stops
+                    0.0,                        # std num_stops = 0
+                    patch_stats[0, 2].item(),  # num_rewards
+                    0.0,                        # std num_rewards = 0
+                    patch_stats[0, 2].item(),  # total rewards = same as mean
+                    1.0,                        # num_patches = 1
+                ], dtype=torch.float32)
+            else:
+                aggregate_stats = torch.tensor([
+                    patch_stats[:, 0].mean().item(),
+                    patch_stats[:, 0].std().item(),
+                    patch_stats[:, 1].mean().item(),
+                    patch_stats[:, 1].std().item(),
+                    patch_stats[:, 2].mean().item(),
+                    patch_stats[:, 2].std().item(),
+                    patch_stats[:, 2].sum().item(),
+                    float(len(patch_stats)),
+                ], dtype=torch.float32)
+            
+            return data_tensor, aggregate_stats
+        else:
+            # Return only first patch statistics
+            return data_tensor, patch_stats_list[0]
+        
+        # ===== Parameter Generators =====
+        
     def constant_params(self, theta: torch.Tensor):
         """
         Generator that yields the same theta forever.
@@ -139,24 +184,24 @@ class PatchForagingDDM:
         """
         while True:
             yield theta
-    
+        
     def random_walk_params(self, theta_init: torch.Tensor, sigma: float = 0.05,
-                          clip_low: torch.Tensor = None, clip_high: torch.Tensor = None):
+                            clip_low: torch.Tensor = None, clip_high: torch.Tensor = None):
         """
-        Generator that yields drifting theta via random walk.
+        Generator that yields moving theta via random walk.
         
         Args:
             theta_init: Initial [drift_rate, reward_bump, failure_bump]
             sigma: Step size standard deviation (isotropic)
-            clip_low/high: Bounds (default: [0.01, 0.01, 0.0] to [2.0, 2.0, 2.0])
+            clip_low/high: Bounds (default: [0.01, 0.01, 0.0] to [1.5, 1.5, 1.5])
         
         Yields:
-            theta (drifting via random walk)
+            theta (moving via random walk)
         """
         if clip_low is None:
             clip_low = torch.tensor([0.01, 0.01, 0.0])
         if clip_high is None:
-            clip_high = torch.tensor([2.0, 2.0, 2.0])
+            clip_high = torch.tensor([1.5, 1.5, 1.5])
         
         theta = theta_init.clone()
         
@@ -165,9 +210,9 @@ class PatchForagingDDM:
             # Update for next iteration
             theta = theta + torch.randn(3) * sigma
             theta = torch.clamp(theta, clip_low, clip_high)
-    
+
     def step_change_params(self, mean_patches_per_regime: int = 10,
-                          theta_ranges: tuple = None):
+                            theta_ranges: tuple = None):
         """
         Generator that yields theta with step changes between regimes.
         
@@ -180,7 +225,7 @@ class PatchForagingDDM:
         """
         if theta_ranges is None:
             low = torch.tensor([0.01, 0.01, 0.0])
-            high = torch.tensor([2.0, 2.0, 2.0])
+            high = torch.tensor([1.5, 1.5, 1.5])
         else:
             low, high = theta_ranges
         
@@ -195,9 +240,9 @@ class PatchForagingDDM:
             # Yield the same theta for all patches in this regime
             for _ in range(regime_length):
                 yield current_theta.clone()
-    
+
     # ===== Convenience Wrappers =====
-    
+
     def simulate_constant(self, theta: torch.Tensor, window_sites: int) -> torch.Tensor:
         """
         Convenience: simulate with constant parameters.
@@ -211,25 +256,25 @@ class PatchForagingDDM:
         """
         param_gen = self.constant_params(theta)
         return self.simulate_trial(param_gen, window_sites)
-    
-    def simulate_with_drift(self, theta_mean: torch.Tensor, window_sites: int,
-                           drift_sigma: float = 0.05) -> torch.Tensor:
+
+    def simulate_with_random_walk(self, theta_mean: torch.Tensor, window_sites: int,
+                            random_walk_sigma: float = 0.0) -> torch.Tensor:
         """
-        Convenience: simulate with random walk drift around theta_mean.
+        Convenience: simulate with random walk around theta_mean.
         
         Args:
             theta_mean: Mean [drift_rate, reward_bump, failure_bump]
             window_sites: Number of sites to simulate
-            drift_sigma: Random walk step size
+            random_walk_sigma: Random walk step size
         
         Returns:
             (window_sites, 3) tensor
         """
-        param_gen = self.random_walk_params(theta_mean, sigma=drift_sigma)
+        param_gen = self.random_walk_params(theta_mean, sigma=random_walk_sigma)
         return self.simulate_trial(param_gen, window_sites)
-    
+
     def simulate_with_steps(self, window_sites: int,
-                           mean_patches_per_regime: int = 10) -> torch.Tensor:
+                            mean_patches_per_regime: int = 10) -> torch.Tensor:
         """
         Convenience: simulate with step changes in parameters.
         
@@ -242,9 +287,9 @@ class PatchForagingDDM:
         """
         param_gen = self.step_change_params(mean_patches_per_regime)
         return self.simulate_trial(param_gen, window_sites)
-    
+
     # ===== Backward Compatibility =====
-    
+
     def __call__(self, theta: torch.Tensor, max_sites: int = 50) -> torch.Tensor:
         """
         Backward compatibility wrapper.
@@ -264,18 +309,6 @@ class PatchForagingDDM:
                 self.simulate_constant(theta[i], max_sites) 
                 for i in range(theta.shape[0])
             ])
-    
-    def simulate_window_with_drift(self, theta_mean: torch.Tensor, window_sites: int,
-                                   drift_sigma: float = 0.05, patches_per_window: int = 10):
-        """
-        DEPRECATED: Use simulate_with_drift() instead.
-        Kept for backward compatibility with existing code.
-        """
-        result = self.simulate_with_drift(theta_mean, window_sites, drift_sigma)
-        # Old function returned (data, theta_mean, trajectory)
-        # New function just returns data, but we fake the other returns
-        return result, theta_mean, []
-
 
 def create_prior():
     """
@@ -288,7 +321,7 @@ def create_prior():
     
     return BoxUniform(
         low=torch.tensor([0.01, 0.01, 0.0]),
-        high=torch.tensor([2.0, 2.0, 2.0])
+        high=torch.tensor([1.5, 1.5, 1.5])
     )
 
 
@@ -311,7 +344,7 @@ if __name__ == "__main__":
     # Test 2: Random walk
     print("\n2. Random walk parameters")
     theta_mean = torch.tensor([0.5, 0.6, 0.2])
-    data = simulator.simulate_with_drift(theta_mean, window_sites=100, drift_sigma=0.1)
+    data = simulator.simulate_window_with_random_walk(theta_mean, window_sites=100, random_walk_sigma=0.0)
     print(f"   Shape: {data.shape}")
     print(f"   Patches: {(data[:, 2] == 0).sum().item()}")
     
@@ -339,11 +372,6 @@ if __name__ == "__main__":
     data_batch = simulator(theta_batch, max_sites=50)
     print(f"   Shape: {data_batch.shape}")
     
-    # Test 7: Old simulate_window_with_drift (deprecated but working)
-    print("\n7. Deprecated simulate_window_with_drift")
-    data, _, _ = simulator.simulate_window_with_drift(theta_mean, window_sites=100)
-    print(f"   Shape: {data.shape}")
-    
     print("\n" + "="*60)
     print("All tests passed!")
     print("="*60)
@@ -357,7 +385,7 @@ if __name__ == "__main__":
 data = simulator.simulate_constant(theta, window_sites=100)
 
 # Random walk:
-data = simulator.simulate_with_drift(theta_mean, window_sites=100, drift_sigma=0.05)
+data = simulator.simulate_window_with_random_walk(theta_mean, window_sites=100, random_walk_sigma=0.0)
 
 # Step changes:
 data = simulator.simulate_with_steps(window_sites=100, mean_patches_per_regime=10)

@@ -7,7 +7,6 @@ Single purpose: Assess quality of parameter recovery.
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import List
 from tqdm import tqdm
 
 from features import extract_features
@@ -30,6 +29,8 @@ def run_sbc(simulator, prior, posterior, num_tests: int = 50,
     ranks = []
     successful = 0
     
+    error_counts = {'simulation': 0, 'inference': 0, 'nan': 0, 'other': 0}
+    
     for _ in tqdm(range(num_tests * 2)):  # Try extra in case some fail
         if successful >= num_tests:
             break
@@ -39,13 +40,26 @@ def run_sbc(simulator, prior, posterior, num_tests: int = 50,
             theta_true = prior.sample()
             
             # Simulate data
-            window = simulator.simulate_with_drift(theta_true, window_sites=100, drift_sigma=0.05)
-            
+            try:
+                window = simulator.simulate_with_random_walk(theta_true, window_sites=100, random_walk_sigma=0.05)
+            except Exception as e:
+                error_counts['simulation'] += 1
+                if error_counts['simulation'] <= 3:  # Print first 3 errors
+                    print(f"\n  Simulation error: {type(e).__name__}: {e}")
+                continue
+
             # Infer
-            samples = infer_parameters(posterior, window, num_samples=num_samples)
+            try:
+                samples = infer_parameters(posterior, window, num_samples=num_samples)
+            except Exception as e:
+                error_counts['inference'] += 1
+                if error_counts['inference'] <= 3:  # Print first 3 errors
+                    print(f"\n  Inference error: {type(e).__name__}: {e}")
+                continue
             
             # Check for NaN
             if torch.isnan(samples).any():
+                error_counts['nan'] += 1
                 continue
             
             # Compute ranks
@@ -53,16 +67,32 @@ def run_sbc(simulator, prior, posterior, num_tests: int = 50,
             ranks.append(rank)
             successful += 1
             
-        except Exception:
+        except Exception as e:
+            error_counts['other'] += 1
+            if error_counts['other'] <= 3:  # Print first 3 errors
+                print(f"\n  Other error: {type(e).__name__}: {e}")
             continue
     
     ranks = np.array(ranks)
     
     print(f"SBC complete: {successful}/{num_tests} tests succeeded")
-    print(f"\nRank statistics (should be ~{num_samples/2} if well-calibrated):")
-    param_names = ['drift_rate', 'reward_bump', 'failure_bump']
-    for i, name in enumerate(param_names):
-        print(f"  {name:15s}: mean={ranks[:, i].mean():6.1f}, std={ranks[:, i].std():5.1f}")
+    
+    # Report errors
+    if successful < num_tests:
+        print(f"\nError summary:")
+        print(f"  Simulation errors: {error_counts['simulation']}")
+        print(f"  Inference errors:  {error_counts['inference']}")
+        print(f"  NaN samples:       {error_counts['nan']}")
+        print(f"  Other errors:      {error_counts['other']}")
+    
+    # Only print statistics if we have successful tests
+    if successful > 0:
+        print(f"\nRank statistics (should be ~{num_samples/2} if well-calibrated):")
+        param_names = ['drift_rate', 'reward_bump', 'failure_bump']
+        for i, name in enumerate(param_names):
+            print(f"  {name:15s}: mean={ranks[:, i].mean():6.1f}, std={ranks[:, i].std():5.1f}")
+    else:
+        print("\nâš ï¸  No successful tests - cannot compute rank statistics")
     
     return ranks
 
@@ -198,7 +228,7 @@ def plot_pairplot(samples: torch.Tensor, true_theta=None, save_path: str = None)
 if __name__ == "__main__":
     print("Testing validation module...")
     
-    from simulator_clean import PatchForagingDDM, create_prior
+    from simulator import PatchForagingDDM, create_prior
     from inference import train_sbi, infer_parameters
     
     # Train small model

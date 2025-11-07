@@ -13,14 +13,14 @@ def extract_features(window: torch.Tensor) -> torch.Tensor:
     Extract features from behavioral window.
     
     Input: (100, 3) window [time_since_patch_start, reward, stopped]
-    Output: (611,) feature vector
+    Output: (604,) feature vector
     
     Features:
     - Original data flattened (300)
     - Inter-site intervals (100)
     - Cumulative rewards per patch (100)
     - Failure run lengths (100)
-    - Summary statistics (11)
+    - Summary statistics (7 features)
     """
     times = window[:, 0]
     rewards = window[:, 1]
@@ -32,7 +32,6 @@ def extract_features(window: torch.Tensor) -> torch.Tensor:
     features.append(window.flatten())
     
     # === Inter-site intervals (100 features) ===
-    # Key for identifying drift_rate!
     intervals = torch.cat([times[0:1], times[1:] - times[:-1]])
     
     # Detect patch boundaries: where animal left (stopped=0)
@@ -47,7 +46,6 @@ def extract_features(window: torch.Tensor) -> torch.Tensor:
     features.append(intervals_masked)
     
     # === Cumulative rewards (100 features) ===
-    # Rewards collected before each site (affects reward probability)
     cumulative_rewards = torch.zeros_like(rewards)
     reward_count = 0
     for i in range(len(rewards)):
@@ -58,41 +56,23 @@ def extract_features(window: torch.Tensor) -> torch.Tensor:
             reward_count += 1
     features.append(cumulative_rewards)
     
-    # === Failure runs (100 features) ===
-    # Consecutive failures - isolates drift_rate (no reward_bump acting)
-    failure_run = torch.zeros_like(rewards)
-    run_length = 0
+    # === Cumulative failures (100 features) ==
+    cumulative_failures = torch.zeros_like(rewards)
+    failure_count = 0
     for i in range(len(rewards)):
         if patch_boundaries[i] > 0:
-            run_length = 0
-        if stopped[i] > 0:
-            if rewards[i] == 0:
-                run_length += 1
-            else:
-                run_length = 0
-        else:
-            run_length = 0
-        failure_run[i] = run_length
-    features.append(failure_run)
-    
-    # === Summary statistics (11 features) ===
-    # Robust aggregate features
-    valid_intervals = intervals_masked[intervals_masked > 0]
-    mean_interval = valid_intervals.mean() if len(valid_intervals) > 0 else torch.tensor(0.0)
-    std_interval = valid_intervals.std() if len(valid_intervals) > 1 else torch.tensor(0.0)
-    
+            failure_count = 0
+        cumulative_failures[i] = failure_count
+        if stopped[i] > 0 and rewards[i] == 0:
+            failure_count += 1
+    features.append(cumulative_failures)
+
+    # === Summary statistics (4 features) ===
     summary = torch.tensor([
-        mean_interval,
-        std_interval,
-        times.max(),
-        rewards.sum(),
+        times.max()/100,
         rewards.mean(),
-        cumulative_rewards.max(),
-        stopped.sum(),
         stopped.mean(),
-        (stopped == 0).sum().float(),
-        failure_run.max(),
-        (failure_run > 0).float().mean(),
+        (cumulative_failures > 0).float().mean(),
     ])
     summary = torch.nan_to_num(summary, nan=0.0, posinf=0.0, neginf=0.0)
     features.append(summary)
@@ -115,5 +95,3 @@ if __name__ == "__main__":
     
     print(f"Input shape: {window.shape}")
     print(f"Output shape: {features.shape}")
-    print(f"Expected: (611,)")
-    print(f"✓ Test passed!" if features.shape[0] == 611 else "✗ Test failed!")

@@ -1,7 +1,0 @@
-{
-  "n_simulations": 50000,
-  "seed": 42,
-  "max_rewards": 21,
-  "timestamp": "20251017_140128",
-  "validation_results": {
-    "test_theta": 

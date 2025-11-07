@@ -12,7 +12,7 @@ from typing import Optional
 from features import extract_features
 
 
-def generate_training_data(simulator, prior, num_simulations: int, window_sites: int = 100):
+def generate_training_data(simulator, prior, num_simulations: int, window_sites: int = 300):
     """
     Generate training data for SBI.
     
@@ -31,12 +31,12 @@ def generate_training_data(simulator, prior, num_simulations: int, window_sites:
         
         # Sample parameters
         theta = prior.sample()
-        
-        # Simulate window with drift around theta
-        window = simulator.simulate_with_drift(
+
+        # Simulate window with random walk around theta
+        window = simulator.simulate_with_random_walk(
             theta_mean=theta,
             window_sites=window_sites,
-            drift_sigma=0.05
+            random_walk_sigma=0.0
         )
         
         # Extract features
@@ -128,12 +128,38 @@ def train_sbi(simulator, prior, num_simulations: int = 50000,
     
     return posterior
 
+def save_posterior(posterior, filepath: str = 'posterior.pkl'):
+    """
+    Save trained posterior to disk.
+    
+    Args:
+        posterior: Trained posterior from train_sbi()
+        filepath: Path to save file
+    """
+    torch.save(posterior, filepath)
+    print(f"Posterior saved to {filepath}")
+
+
+def load_posterior(filepath: str = 'posterior.pkl'):
+    """
+    Load trained posterior from disk.
+    
+    Args:
+        filepath: Path to saved posterior
+    
+    Returns:
+        posterior: Trained posterior distribution
+    """
+    posterior = torch.load(filepath)
+    print(f"Posterior loaded from {filepath}")
+    return posterior
+
 
 # Test
 if __name__ == "__main__":
     print("Testing inference module...")
     
-    from simulator_clean import PatchForagingDDM, create_prior
+    from simulator import PatchForagingDDM, create_prior
     
     # Initialize
     simulator = PatchForagingDDM()

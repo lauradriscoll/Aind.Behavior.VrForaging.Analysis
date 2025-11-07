@@ -127,10 +127,10 @@ def plot_parameter_grid_2d(
             theta[fixed_idx] = fixed_param_value
             
             # Simulate window
-            window, _, _ = simulator.simulate_window_with_drift(
+            window, _, _ = simulator.simulate_window_with_random_walk(
                 theta_mean=theta,
                 window_sites=100,
-                drift_sigma=0.01  # Small drift for clearer visualization
+                random_walk_sigma=0.01  # Small random walk for clearer visualization
             )
             
             # Plot
@@ -161,21 +161,24 @@ def plot_parameter_grid_2d(
 
 def plot_all_parameter_combinations(
     grid_size: int = 5,
-    save_dir: str = '.'
+    save_dir: str = 'analysis_results/visualize_parameters'
 ):
     """
     Create all three 2D parameter grids.
-    
+
     Generates:
     1. drift_rate vs reward_bump (fixed failure_bump)
     2. drift_rate vs failure_bump (fixed reward_bump)
     3. reward_bump vs failure_bump (fixed drift_rate)
     """
-    
+
+    # Ensure save directory exists
+    os.makedirs(save_dir, exist_ok=True)
+
     print("="*60)
     print("Generating Parameter Space Visualizations")
     print("="*60)
-    
+
     # Grid 1: drift_rate vs reward_bump
     print("\n1. drift_rate vs reward_bump")
     plot_parameter_grid_2d(
@@ -217,10 +220,14 @@ def plot_all_parameter_combinations(
     print("="*60)
 
 
-def plot_parameter_effect_summary(save_path: str = 'parameter_effects.png'):
+def plot_parameter_effect_summary(save_dir: str = 'analysis_results/visualize_parameters'):
     """
     Create summary figure showing effect of each parameter individually.
     """
+
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = f'{save_dir}/parameter_effects.png'
+
     simulator = PatchForagingDDM()
     
     fig, axes = plt.subplots(3, 3, figsize=(15, 12))
@@ -240,10 +247,10 @@ def plot_parameter_effect_summary(save_path: str = 'parameter_effects.png'):
             theta[param_idx] = param_val
             
             # Simulate
-            window, _, _ = simulator.simulate_window_with_drift(
+            window, _, _ = simulator.simulate_window_with_random_walk(
                 theta_mean=theta,
                 window_sites=100,
-                drift_sigma=0.01
+                random_walk_sigma=0.01
             )
             
             # Plot
@@ -260,10 +267,15 @@ def plot_parameter_effect_summary(save_path: str = 'parameter_effects.png'):
 
 if __name__ == "__main__":
     import sys
+    import os
     
     if len(sys.argv) > 1 and sys.argv[1] == 'summary':
         # Quick summary figure
         plot_parameter_effect_summary()
+
+        print("\nVisualization complete!")
+        print(f"Generated:")
+        print(f"  - parameter_effects.png")
     else:
         # Full grid analysis
         grid_size = 5
@@ -271,7 +283,6 @@ if __name__ == "__main__":
             grid_size = int(sys.argv[1])
         
         plot_all_parameter_combinations(grid_size=grid_size)
-        plot_parameter_effect_summary()
         
         print("\nVisualization complete!")
         print(f"Generated:")
