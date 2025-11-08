@@ -9,8 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from features import extract_features
-from inference import infer_parameters
+from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snpe.snpe_inference import infer_parameters
 
 
 def run_sbc(simulator, prior, posterior, num_tests: int = 50, 
@@ -229,7 +228,7 @@ if __name__ == "__main__":
     print("Testing validation module...")
     
     from simulator import PatchForagingDDM, create_prior
-    from inference import train_sbi, infer_parameters
+    from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snpe.snpe_inference import train_sbi, infer_parameters
     
     # Train small model
     print("\n1. Training small model...")

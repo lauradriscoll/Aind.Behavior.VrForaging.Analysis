@@ -20,7 +20,7 @@ def extract_features(window: torch.Tensor) -> torch.Tensor:
     - Inter-site intervals (100)
     - Cumulative rewards per patch (100)
     - Failure run lengths (100)
-    - Summary statistics (7 features)
+    - Summary statistics (4 features)
     """
     times = window[:, 0]
     rewards = window[:, 1]

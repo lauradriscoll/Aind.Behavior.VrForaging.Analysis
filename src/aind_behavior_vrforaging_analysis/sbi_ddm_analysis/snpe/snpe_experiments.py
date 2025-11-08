@@ -6,9 +6,9 @@ Simple, clear workflows for common tasks.
 
 import torch
 from simulator import PatchForagingDDM, create_prior
-from inference import train_sbi, infer_parameters, save_posterior, load_posterior
+from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snpe.snpe_inference import train_sbi, infer_parameters, save_posterior, load_posterior
 from pathlib import Path
-from validation import run_sbc, print_correlations, plot_posterior, plot_pairplot
+from aind_behavior_vrforaging_analysis.snpe.validation import run_sbc, print_correlations, plot_posterior, plot_pairplot
 
 
 def experiment_basic_training(num_simulations: int = 50000):

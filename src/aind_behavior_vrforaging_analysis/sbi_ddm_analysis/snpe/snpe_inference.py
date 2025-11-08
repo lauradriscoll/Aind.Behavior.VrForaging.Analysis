@@ -9,10 +9,10 @@ from sbi import utils as sbi_utils
 from sbi.inference import SNPE
 from typing import Optional
 
-from features import extract_features
+from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snpe.snpe_features import extract_features
 
 
-def generate_training_data(simulator, prior, num_simulations: int, window_sites: int = 300):
+def generate_training_data(simulator, prior, num_simulations: int, window_sites: int = 100):
     """
     Generate training data for SBI.
     
