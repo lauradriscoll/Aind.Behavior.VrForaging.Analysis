@@ -40,7 +40,7 @@ def run_sbc(simulator, prior, posterior, num_tests: int = 50,
             
             # Simulate data
             try:
-                window = simulator.simulate_with_random_walk(theta_true, window_sites=100, random_walk_sigma=0.05)
+                window = simulator.simulate_with_walk(theta_true, window_sites=100, sigma=0.05)
             except Exception as e:
                 error_counts['simulation'] += 1
                 if error_counts['simulation'] <= 3:  # Print first 3 errors

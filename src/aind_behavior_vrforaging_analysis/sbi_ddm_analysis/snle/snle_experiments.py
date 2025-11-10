@@ -145,7 +145,7 @@ def experiment_test_inference(inference, x_mean, x_std, mode='single',
         
         # Generate observed data
         print("\n1. Generating observed data...")
-        param_gen = simulator.constant_params(true_theta)
+        param_gen = simulator.walk_params_params(true_theta)
         _, observed_stats = simulator.simulate_trial(
             param_gen, 
             window_sites=100,
@@ -243,7 +243,7 @@ def experiment_compare_single_vs_multi(num_simulations = 100000):
     print(f"   True theta: {true_theta}")
     
     # Single-patch inference
-    param_gen = simulator.constant_params(true_theta)
+    param_gen = simulator.walk_params(true_theta)
     _, obs_single = simulator.simulate_trial(param_gen, 100, return_aggregate=False)
     samples_single = infer_parameters_snle(
         inference_single, obs_single, x_mean_single, x_std_single,
@@ -251,7 +251,7 @@ def experiment_compare_single_vs_multi(num_simulations = 100000):
     )
     
     # Multi-patch inference
-    param_gen = simulator.constant_params(true_theta)
+    param_gen = simulator.walk_params(true_theta)
     _, obs_multi = simulator.simulate_trial(param_gen, 100, return_aggregate=True)
     samples_multi = infer_parameters_snle(
         inference_multi, obs_multi, x_mean_multi, x_std_multi,
@@ -328,7 +328,7 @@ if __name__ == "__main__":
             experiment_multi_patch_training(num_simulations=100000)
         elif sys.argv[1] == 'compare':
             # Compare both models
-            experiment_compare_single_vs_multi()
+            experiment_compare_single_vs_multi(num_simulations=100000)
         elif sys.argv[1] == 'full':
             # Full pipeline
             mode = sys.argv[2] if len(sys.argv) > 2 else 'multi'

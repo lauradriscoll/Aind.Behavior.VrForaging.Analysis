@@ -40,7 +40,7 @@ def experiment_basic_training(num_simulations: int = 50000):
     # Test on single window
     print("\n2. Testing inference...")
     test_theta = torch.tensor([0.5, 0.6, 0.2])
-    test_window = simulator.simulate_with_random_walk(test_theta, window_sites=300, random_walk_sigma=0.0)
+    test_window = simulator.simulate_with_walk(test_theta, window_sites=300, sigma=0.0)
     
     samples = infer_parameters(posterior, test_window, num_samples=2000)
     posterior_mean = samples.mean(dim=0)
@@ -122,7 +122,7 @@ def experiment_compare_parameters():
     print("\n2. Testing different parameter regimes...")
     for name, theta in test_cases:
         print(f"\n--- {name} ---")
-        window = simulator.simulate_with_random_walk(theta, window_sites=300, random_walk_sigma=0.0)
+        window = simulator.simulate_with_walk(theta, window_sites=300, sigma=0.0)
         samples = infer_parameters(posterior, window, num_samples=1000)
         mean_estimate = samples.mean(dim=0)
         

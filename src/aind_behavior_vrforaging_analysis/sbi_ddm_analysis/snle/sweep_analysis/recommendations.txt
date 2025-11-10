@@ -1,0 +1,17 @@
+PARAMETER SWEEP RECOMMENDATIONS
+================================================================================
+
+OPTIMAL CONFIGURATION:
+  num_simulations: 200000
+  window_sites: 100
+
+QUICK TEST CONFIGURATION:
+  num_simulations: 1000
+  window_sites: 100
+
+PRODUCTION CONFIGURATION:
+  num_simulations: 200000
+  window_sites: 100
+
+USAGE EXAMPLES:
+python snle_sliding_window_experiments.py full 200000

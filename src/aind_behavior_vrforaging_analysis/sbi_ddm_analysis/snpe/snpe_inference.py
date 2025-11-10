@@ -32,11 +32,11 @@ def generate_training_data(simulator, prior, num_simulations: int, window_sites:
         # Sample parameters
         theta = prior.sample()
 
-        # Simulate window with random walk around theta
-        window = simulator.simulate_with_random_walk(
+        # Simulate window with walk around theta
+        window = simulator.simulate_with_walk(
             theta_mean=theta,
             window_sites=window_sites,
-            random_walk_sigma=0.0
+            sigma=0.0
         )
         
         # Extract features

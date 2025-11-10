@@ -4,7 +4,7 @@ Simulator for patch foraging DDM.
 Structure:
 1. Core simulation: _simulate_one_patch, sample_inter_site_interval
 2. Main interface: simulate_trial (takes parameter generator)
-3. Parameter generators: constant_params, random_walk_params, step_change_params
+3. Parameter generators: walk_params, step_change_params
 4. Convenience wrappers for common use cases
 """
 
@@ -35,7 +35,7 @@ class PatchForagingDDM:
                  interval_std=0.3, 
                  interval_min=0.1, 
                  interval_max=5.0,
-                 noise_std=0.0):
+                 noise_std=0.2):
         self.initial_prob = initial_prob
         self.decay_rate = decay_rate
         self.threshold = threshold
@@ -99,7 +99,6 @@ class PatchForagingDDM:
         num_stops = len(patch_data)
         summary_stats = torch.tensor([total_time, num_stops, num_rewards], dtype=torch.float32)
     
-
         return patch_data, global_time, summary_stats
     
     # ===== Main Interface =====
@@ -171,32 +170,20 @@ class PatchForagingDDM:
             return data_tensor, patch_stats_list[0]
         
         # ===== Parameter Generators =====
-        
-    def constant_params(self, theta: torch.Tensor):
-        """
-        Generator that yields the same theta forever.
-        
-        Args:
-            theta: [drift_rate, reward_bump, failure_bump]
-        
-        Yields:
-            theta (same value indefinitely)
-        """
-        while True:
-            yield theta
-        
-    def random_walk_params(self, theta_init: torch.Tensor, sigma: float = 0.05,
+
+    def walk_params(self, theta_init: torch.Tensor, sigma: float = 0.0, shift: float = 0.0,
                             clip_low: torch.Tensor = None, clip_high: torch.Tensor = None):
         """
-        Generator that yields moving theta via random walk.
+        Generator that yields moving theta via walk. Assumes constant unless sigma/shift > 0.
         
         Args:
             theta_init: Initial [drift_rate, reward_bump, failure_bump]
             sigma: Step size standard deviation (isotropic)
             clip_low/high: Bounds (default: [0.01, 0.01, 0.0] to [1.5, 1.5, 1.5])
-        
+            shift: Directional shift (using 'shift' instead of 'drift' to avoid confusion)
+
         Yields:
-            theta (moving via random walk)
+            theta (moving via walk)
         """
         if clip_low is None:
             clip_low = torch.tensor([0.01, 0.01, 0.0])
@@ -208,7 +195,7 @@ class PatchForagingDDM:
         while True:
             yield theta.clone()
             # Update for next iteration
-            theta = theta + torch.randn(3) * sigma
+            theta = theta + torch.randn(3) * sigma + shift
             theta = torch.clamp(theta, clip_low, clip_high)
 
     def step_change_params(self, mean_patches_per_regime: int = 10,
@@ -243,34 +230,23 @@ class PatchForagingDDM:
 
     # ===== Convenience Wrappers =====
 
-    def simulate_constant(self, theta: torch.Tensor, window_sites: int) -> torch.Tensor:
+    def simulate_with_walk(self, theta_mean: torch.Tensor, window_sites: int,
+                            sigma: float = 0.0, shift: float = 0.0) -> torch.Tensor:
         """
-        Convenience: simulate with constant parameters.
-        
-        Args:
-            theta: [drift_rate, reward_bump, failure_bump]
-            window_sites: Number of sites to simulate
-        
-        Returns:
-            (window_sites, 3) tensor
-        """
-        param_gen = self.constant_params(theta)
-        return self.simulate_trial(param_gen, window_sites)
+        Convenience: simulate with walk around theta_mean. 
+        Note: This is not random walk because sigma can be 0 and shift moves 
+              parameters deterministically in a particular direction.
 
-    def simulate_with_random_walk(self, theta_mean: torch.Tensor, window_sites: int,
-                            random_walk_sigma: float = 0.0) -> torch.Tensor:
-        """
-        Convenience: simulate with random walk around theta_mean.
-        
         Args:
             theta_mean: Mean [drift_rate, reward_bump, failure_bump]
             window_sites: Number of sites to simulate
-            random_walk_sigma: Random walk step size
+            sigma: Random walk step size
+            shift: directional shift (using 'shift' instead of 'drift' to avoid confusion)
         
         Returns:
             (window_sites, 3) tensor
         """
-        param_gen = self.random_walk_params(theta_mean, sigma=random_walk_sigma)
+        param_gen = self.walk_params(theta_mean, sigma=sigma, shift=shift)
         return self.simulate_trial(param_gen, window_sites)
 
     def simulate_with_steps(self, window_sites: int,
@@ -288,28 +264,6 @@ class PatchForagingDDM:
         param_gen = self.step_change_params(mean_patches_per_regime)
         return self.simulate_trial(param_gen, window_sites)
 
-    # ===== Backward Compatibility =====
-
-    def __call__(self, theta: torch.Tensor, max_sites: int = 50) -> torch.Tensor:
-        """
-        Backward compatibility wrapper.
-        
-        Args:
-            theta: (3,) or (batch, 3) parameters
-            max_sites: Number of sites
-        
-        Returns:
-            (max_sites, 3) or (batch, max_sites, 3) tensor
-        """
-        if theta.dim() == 1:
-            return self.simulate_constant(theta, max_sites)
-        else:
-            # Batch simulation
-            return torch.stack([
-                self.simulate_constant(theta[i], max_sites) 
-                for i in range(theta.shape[0])
-            ])
-
 def create_prior():
     """
     Prior distribution for DDM parameters
@@ -324,7 +278,6 @@ def create_prior():
         high=torch.tensor([1.5, 1.5, 1.5])
     )
 
-
 # ===== Tests =====
 
 if __name__ == "__main__":
@@ -334,40 +287,33 @@ if __name__ == "__main__":
     
     simulator = PatchForagingDDM()
     
-    # Test 1: Constant parameters
-    print("\n1. Constant parameters")
-    theta = torch.tensor([0.3, 0.4, 0.15])
-    data = simulator.simulate_constant(theta, window_sites=50)
-    print(f"   Shape: {data.shape}")
-    print(f"   Patches: {(data[:, 2] == 0).sum().item()}")
-    
-    # Test 2: Random walk
-    print("\n2. Random walk parameters")
+    # Test 1: Walk parameters
+    print("\n1. Walk parameters")
     theta_mean = torch.tensor([0.5, 0.6, 0.2])
-    data = simulator.simulate_window_with_random_walk(theta_mean, window_sites=100, random_walk_sigma=0.0)
+    data = simulator.simulate_window_with_walk(theta_mean, window_sites=100, sigma=0.0, shift=0.0)
     print(f"   Shape: {data.shape}")
     print(f"   Patches: {(data[:, 2] == 0).sum().item()}")
-    
-    # Test 3: Step changes
-    print("\n3. Step change parameters")
+
+    # Test 2: Step changes
+    print("\n2. Step change parameters")
     data = simulator.simulate_with_steps(window_sites=100, mean_patches_per_regime=5)
     print(f"   Shape: {data.shape}")
     print(f"   Patches: {(data[:, 2] == 0).sum().item()}")
-    
-    # Test 4: Manual parameter generator usage
-    print("\n4. Manual generator usage")
+
+    # Test 3: Manual parameter generator usage
+    print("\n3. Manual generator usage")
     param_gen = simulator.step_change_params(mean_patches_per_regime=3)
     data = simulator.simulate_trial(param_gen, window_sites=50)
     print(f"   Shape: {data.shape}")
     print(f"   Patches: {(data[:, 2] == 0).sum().item()}")
-    
-    # Test 5: Backward compatibility
-    print("\n5. Backward compatibility (__call__)")
+
+    # Test 4: Backward compatibility
+    print("\n4. Backward compatibility (__call__)")
     data = simulator(theta, max_sites=50)
     print(f"   Shape: {data.shape}")
-    
-    # Test 6: Batch simulation
-    print("\n6. Batch simulation")
+
+    # Test 5: Batch simulation
+    print("\n5. Batch simulation")
     theta_batch = torch.rand(5, 3)
     data_batch = simulator(theta_batch, max_sites=50)
     print(f"   Shape: {data_batch.shape}")
@@ -381,16 +327,13 @@ if __name__ == "__main__":
     print("Example Usage")
     print("="*60)
     print("""
-# Constant parameters:
-data = simulator.simulate_constant(theta, window_sites=100)
-
-# Random walk:
-data = simulator.simulate_window_with_random_walk(theta_mean, window_sites=100, random_walk_sigma=0.0)
+# Walk parameters:
+data = simulator.simulate_window_with_walk(theta_mean, window_sites=100, sigma=0.0, shift=0.0)
 
 # Step changes:
 data = simulator.simulate_with_steps(window_sites=100, mean_patches_per_regime=10)
 
 # Custom generator:
-param_gen = simulator.random_walk_params(theta_init, sigma=0.1)
+param_gen = simulator.walk_params(theta_init, sigma=0.1)
 data = simulator.simulate_trial(param_gen, window_sites=100)
     """)

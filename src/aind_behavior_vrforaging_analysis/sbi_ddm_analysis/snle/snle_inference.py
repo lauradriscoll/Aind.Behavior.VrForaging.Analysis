@@ -8,6 +8,7 @@ Supports both single-patch and multi-patch inference modes.
 import torch
 from tqdm import tqdm
 from sbi.inference import SNLE
+from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_utils import save_snle_model, load_snle_model
 
 def generate_likelihood_training_data(simulator, prior, num_simulations=10000, 
                                      window_sites=100, mode='single'):
@@ -40,7 +41,7 @@ def generate_likelihood_training_data(simulator, prior, num_simulations=10000,
         theta = prior.sample()
         
         # Create constant parameter generator
-        param_gen = simulator.constant_params(theta)
+        param_gen = simulator.walk_params(theta)
         
         # Simulate trial and get stats
         _, summary_stats = simulator.simulate_trial(
@@ -202,126 +203,14 @@ def infer_parameters_snle(inference, observed_stats,
     return posterior_samples
 
 
-def save_snle_model(inference, x_mean, x_std, mode='single', base_dir='snle_models'):
-    """
-    Save trained SNLE model and normalization parameters in timestamped folder.
-    
-    Args:
-        inference: Trained SNLE inference object
-        x_mean: Training data mean
-        x_std: Training data std
-        mode: 'single' or 'multi' for folder naming
-        base_dir: Base directory for all models
-    
-    Returns:
-        model_dir: Path to the created model directory
-    """
-    from datetime import datetime
-    import os
-    
-    # Create timestamp
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    model_dir = os.path.join(base_dir, f'{mode}_patch_{timestamp}')
-    analysis_dir = os.path.join(model_dir, 'analysis')
-    
-    # Create directories
-    os.makedirs(model_dir, exist_ok=True)
-    os.makedirs(analysis_dir, exist_ok=True)
-    
-    # Save model
-    model_dict = {
-        'inference': inference,
-        'x_mean': x_mean,
-        'x_std': x_std,
-        'mode': mode,
-        'timestamp': timestamp,
-    }
-    model_path = os.path.join(model_dir, 'model.pkl')
-    torch.save(model_dict, model_path)
-    
-    print(f"SNLE model saved to: {model_dir}")
-    print(f"  - Model: {model_path}")
-    print(f"  - Analysis folder: {analysis_dir}")
-    
-    return model_dir
-
-
-def load_snle_model(model_dir):
-    """
-    Load trained SNLE model and normalization parameters from timestamped folder.
-    
-    Args:
-        model_dir: Path to model directory (e.g., 'snle_models/multi_patch_20241107_143022')
-    
-    Returns:
-        inference: Trained SNLE inference object
-        x_mean: Training data mean
-        x_std: Training data std
-        mode: 'single' or 'multi'
-        analysis_dir: Path to analysis folder
-    """
-    import os
-    
-    model_path = os.path.join(model_dir, 'model.pkl')
-    analysis_dir = os.path.join(model_dir, 'analysis')
-    
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(f"Model not found at {model_path}")
-    
-    model_dict = torch.load(model_path)
-    
-    print(f"SNLE model loaded from: {model_dir}")
-    print(f"  - Mode: {model_dict['mode']}")
-    print(f"  - Timestamp: {model_dict['timestamp']}")
-    print(f"  - Analysis folder: {analysis_dir}")
-    
-    return (model_dict['inference'], model_dict['x_mean'], model_dict['x_std'], 
-            model_dict['mode'], analysis_dir)
-
-
-def list_saved_models(base_dir='snle_models'):
-    """
-    List all saved SNLE models.
-    
-    Args:
-        base_dir: Base directory for all models
-    
-    Returns:
-        models: List of (model_dir, mode, timestamp) tuples
-    """
-    import os
-    from datetime import datetime
-    
-    if not os.path.exists(base_dir):
-        print(f"No models found (directory {base_dir} does not exist)")
-        return []
-    
-    models = []
-    for folder in sorted(os.listdir(base_dir), reverse=True):
-        model_dir = os.path.join(base_dir, folder)
-        if os.path.isdir(model_dir) and os.path.exists(os.path.join(model_dir, 'model.pkl')):
-            # Parse folder name: mode_patch_timestamp
-            parts = folder.split('_')
-            if len(parts) >= 3:
-                mode = parts[0]
-                timestamp = '_'.join(parts[2:])
-                models.append((model_dir, mode, timestamp))
-    
-    print(f"\nFound {len(models)} saved models:")
-    for i, (model_dir, mode, timestamp) in enumerate(models):
-        print(f"  {i+1}. {mode:6s} - {timestamp} - {model_dir}")
-    
-    return models
-
-
 # Test
 if __name__ == "__main__":
     print("Testing SNLE inference module...")
     
-    from simulator import PatchForagingDDM, create_prior
+    from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM, create_prior
     
     # Setup
-    simulator = PatchForagingDDM()
+    simulator = PatchForagingDDM(noise_std=0.0)
     prior = create_prior()
     
     # Test training (small dataset)
@@ -342,7 +231,7 @@ if __name__ == "__main__":
     # Test inference
     print("\n3. Testing inference...")
     true_theta = torch.tensor([0.6, 0.8, 0.3])
-    param_gen = simulator.constant_params(true_theta)
+    param_gen = simulator.walk_params(true_theta)
     _, observed_stats = simulator.simulate_trial(param_gen, 100, return_aggregate=False)
     
     samples = infer_parameters_snle(

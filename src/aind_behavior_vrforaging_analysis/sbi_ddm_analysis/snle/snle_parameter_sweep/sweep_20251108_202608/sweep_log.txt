@@ -1,0 +1,351 @@
+2025-11-08 20:26:08,747 - INFO - ================================================================================
+2025-11-08 20:26:08,747 - INFO - SNLE PARAMETER SWEEP ANALYSIS
+2025-11-08 20:26:08,748 - INFO - ================================================================================
+2025-11-08 20:26:08,748 - INFO - Results directory: snle_parameter_sweep/sweep_20251108_202608
+2025-11-08 20:26:08,748 - INFO - num_simulations: [1000000, 2000000]
+2025-11-08 20:26:08,748 - INFO - window_sites: [25, 50, 75, 100]
+2025-11-08 20:26:08,748 - INFO - Test cases: 3
+2025-11-08 20:26:08,748 - INFO - ================================================================================
+2025-11-08 20:26:08,748 - INFO - 
+================================================================================
+2025-11-08 20:26:08,748 - INFO - PRE-GENERATING TRAINING DATA
+2025-11-08 20:26:08,748 - INFO - ================================================================================
+2025-11-08 20:26:08,749 - INFO - 
+Generating data for window_sites=25 (n=2000000)...
+2025-11-08 21:02:10,648 - INFO -   Saved to snle_parameter_sweep/sweep_20251108_202608/training_data_sites25.pkl
+2025-11-08 21:02:10,649 - INFO - 
+Generating data for window_sites=50 (n=2000000)...
+2025-11-08 23:21:32,267 - INFO -   Saved to snle_parameter_sweep/sweep_20251108_202608/training_data_sites50.pkl
+2025-11-08 23:21:32,272 - INFO - 
+Generating data for window_sites=75 (n=2000000)...
+2025-11-09 01:32:21,888 - INFO -   Saved to snle_parameter_sweep/sweep_20251108_202608/training_data_sites75.pkl
+2025-11-09 01:32:21,892 - INFO - 
+Generating data for window_sites=100 (n=2000000)...
+2025-11-09 20:38:34,835 - INFO -   Saved to snle_parameter_sweep/sweep_20251108_202608/training_data_sites100.pkl
+2025-11-09 20:38:34,846 - INFO - 
+================================================================================
+2025-11-09 20:38:34,846 - INFO - TRAINING DATA GENERATION COMPLETE
+2025-11-09 20:38:34,846 - INFO - ================================================================================
+2025-11-09 20:38:34,846 - INFO - 
+
+################################################################################
+2025-11-09 20:38:34,846 - INFO - COMBINATION 1/8
+2025-11-09 20:38:34,846 - INFO - ################################################################################
+2025-11-09 20:38:34,847 - INFO - 
+================================================================================
+2025-11-09 20:38:34,847 - INFO - Training: num_simulations=1000000, window_sites=25
+2025-11-09 20:38:34,847 - INFO - ================================================================================
+2025-11-09 20:38:34,852 - INFO -   Using pre-generated training data (subset: first 1000000 samples)
+2025-11-09 20:38:34,852 - INFO -   Subset shape: theta=torch.Size([1000000, 3]), x=torch.Size([1000000, 8])
+2025-11-09 20:38:34,852 - INFO -   Training SNLE (multi mode)...
+2025-11-09 21:14:46,913 - INFO - Training complete: val_loss=-21.4782
+2025-11-09 21:14:47,526 - INFO - Model saved to: snle_parameter_sweep/sweep_20251108_202608/model_sims1000000_sites25/model.pkl
+2025-11-09 21:14:47,526 - INFO - 
+Evaluating on test case: low_drift_high_bump
+2025-11-09 21:15:23,218 - INFO -   Computing generative metrics (100 patches)...
+2025-11-09 21:15:23,279 - INFO -     total_time: Wasserstein=16.8285, KL=19.2326
+2025-11-09 21:15:23,280 - INFO -     num_stops: Wasserstein=16.5100, KL=17.8428
+2025-11-09 21:15:23,280 - INFO -     num_rewards: Wasserstein=5.2400, KL=12.2305
+2025-11-09 21:15:23,280 - INFO -   MAE: 0.3894, RMSE: 0.4888, Coverage: 0.00
+2025-11-09 21:15:23,280 - INFO - 
+Evaluating on test case: high_drift_low_bump
+2025-11-09 21:16:05,038 - INFO -   Computing generative metrics (100 patches)...
+2025-11-09 21:16:05,047 - INFO -     total_time: Wasserstein=0.7100, KL=4.3026
+2025-11-09 21:16:05,047 - INFO -     num_stops: Wasserstein=0.7800, KL=1.3854
+2025-11-09 21:16:05,047 - INFO -     num_rewards: Wasserstein=0.5700, KL=0.7404
+2025-11-09 21:16:05,047 - INFO -   MAE: 0.6917, RMSE: 0.7611, Coverage: 0.00
+2025-11-09 21:16:05,048 - INFO - 
+Evaluating on test case: balanced
+2025-11-09 21:16:39,940 - INFO -   Computing generative metrics (100 patches)...
+2025-11-09 21:16:39,950 - INFO -     total_time: Wasserstein=3.5044, KL=18.8413
+2025-11-09 21:16:39,950 - INFO -     num_stops: Wasserstein=3.4500, KL=16.9579
+2025-11-09 21:16:39,950 - INFO -     num_rewards: Wasserstein=2.3900, KL=13.0891
+2025-11-09 21:16:39,951 - INFO -   MAE: 0.7671, RMSE: 0.9006, Coverage: 0.00
+2025-11-09 21:16:39,980 - INFO - 
+Completed 1/8 combinations
+2025-11-09 21:16:39,980 - INFO -   Trained: 1, Skipped: 0, Failed: 0
+2025-11-09 21:16:39,980 - INFO - 
+
+################################################################################
+2025-11-09 21:16:39,980 - INFO - COMBINATION 2/8
+2025-11-09 21:16:39,980 - INFO - ################################################################################
+2025-11-09 21:16:39,980 - INFO - 
+================================================================================
+2025-11-09 21:16:39,980 - INFO - Training: num_simulations=1000000, window_sites=50
+2025-11-09 21:16:39,980 - INFO - ================================================================================
+2025-11-09 21:16:39,981 - INFO -   Using pre-generated training data (subset: first 1000000 samples)
+2025-11-09 21:16:39,981 - INFO -   Subset shape: theta=torch.Size([1000000, 3]), x=torch.Size([1000000, 8])
+2025-11-09 21:16:39,981 - INFO -   Training SNLE (multi mode)...
+2025-11-09 21:53:23,082 - INFO - Training complete: val_loss=-21.5708
+2025-11-09 21:53:23,346 - INFO - Model saved to: snle_parameter_sweep/sweep_20251108_202608/model_sims1000000_sites50/model.pkl
+2025-11-09 21:53:23,346 - INFO - 
+Evaluating on test case: low_drift_high_bump
+2025-11-09 21:53:59,410 - INFO -   Computing generative metrics (100 patches)...
+2025-11-09 21:53:59,501 - INFO -     total_time: Wasserstein=2.0260, KL=2.2903
+2025-11-09 21:53:59,501 - INFO -     num_stops: Wasserstein=1.8700, KL=1.8388
+2025-11-09 21:53:59,501 - INFO -     num_rewards: Wasserstein=0.7600, KL=2.3086
+2025-11-09 21:53:59,501 - INFO -   MAE: 0.2399, RMSE: 0.2911, Coverage: 0.33
+2025-11-09 21:53:59,502 - INFO - 
+Evaluating on test case: high_drift_low_bump
+2025-11-09 21:54:34,782 - INFO -   Computing generative metrics (100 patches)...
+2025-11-09 21:54:34,794 - INFO -     total_time: Wasserstein=2.2914, KL=1.7028
+2025-11-09 21:54:34,794 - INFO -     num_stops: Wasserstein=2.3100, KL=5.2452
+2025-11-09 21:54:34,794 - INFO -     num_rewards: Wasserstein=1.5200, KL=0.6574
+2025-11-09 21:54:34,794 - INFO -   MAE: 0.6103, RMSE: 0.7140, Coverage: 0.00
+2025-11-09 21:54:34,794 - INFO - 
+Evaluating on test case: balanced
+2025-11-09 21:55:10,533 - INFO -   Computing generative metrics (100 patches)...
+2025-11-09 21:55:10,558 - INFO -     total_time: Wasserstein=6.4729, KL=19.4111
+2025-11-09 21:55:10,558 - INFO -     num_stops: Wasserstein=6.5000, KL=19.6701
+2025-11-09 21:55:10,558 - INFO -     num_rewards: Wasserstein=3.7100, KL=14.1784
+2025-11-09 21:55:10,559 - INFO -   MAE: 0.3846, RMSE: 0.3917, Coverage: 0.00
+2025-11-09 21:55:10,581 - INFO - 
+Completed 2/8 combinations
+2025-11-09 21:55:10,581 - INFO -   Trained: 2, Skipped: 0, Failed: 0
+2025-11-09 21:55:10,581 - INFO - 
+
+################################################################################
+2025-11-09 21:55:10,581 - INFO - COMBINATION 3/8
+2025-11-09 21:55:10,581 - INFO - ################################################################################
+2025-11-09 21:55:10,581 - INFO - 
+================================================================================
+2025-11-09 21:55:10,581 - INFO - Training: num_simulations=1000000, window_sites=75
+2025-11-09 21:55:10,581 - INFO - ================================================================================
+2025-11-09 21:55:10,582 - INFO -   Using pre-generated training data (subset: first 1000000 samples)
+2025-11-09 21:55:10,582 - INFO -   Subset shape: theta=torch.Size([1000000, 3]), x=torch.Size([1000000, 8])
+2025-11-09 21:55:10,582 - INFO -   Training SNLE (multi mode)...
+2025-11-09 22:30:21,533 - INFO - Training complete: val_loss=-22.8180
+2025-11-09 22:30:21,697 - INFO - Model saved to: snle_parameter_sweep/sweep_20251108_202608/model_sims1000000_sites75/model.pkl
+2025-11-09 22:30:21,697 - INFO - 
+Evaluating on test case: low_drift_high_bump
+2025-11-09 22:31:03,092 - INFO -   Computing generative metrics (100 patches)...
+2025-11-09 22:31:03,177 - INFO -     total_time: Wasserstein=1.8641, KL=1.2263
+2025-11-09 22:31:03,177 - INFO -     num_stops: Wasserstein=1.5900, KL=1.5240
+2025-11-09 22:31:03,177 - INFO -     num_rewards: Wasserstein=0.5900, KL=0.2195
+2025-11-09 22:31:03,177 - INFO -   MAE: 0.3946, RMSE: 0.4396, Coverage: 0.33
+2025-11-09 22:31:03,177 - INFO - 
+Evaluating on test case: high_drift_low_bump
+2025-11-09 22:31:39,571 - INFO -   Computing generative metrics (100 patches)...
+2025-11-09 22:31:39,577 - INFO -     total_time: Wasserstein=0.7572, KL=2.3694
+2025-11-09 22:31:39,577 - INFO -     num_stops: Wasserstein=0.8700, KL=1.6314
+2025-11-09 22:31:39,577 - INFO -     num_rewards: Wasserstein=0.7000, KL=1.2666
+2025-11-09 22:31:39,577 - INFO -   MAE: 0.8515, RMSE: 0.8840, Coverage: 0.00
+2025-11-09 22:31:39,578 - INFO - 
+Evaluating on test case: balanced
+2025-11-09 22:32:14,998 - INFO -   Computing generative metrics (100 patches)...
+2025-11-09 22:32:15,020 - INFO -     total_time: Wasserstein=3.5119, KL=3.2042
+2025-11-09 22:32:15,020 - INFO -     num_stops: Wasserstein=3.6800, KL=5.1412
+2025-11-09 22:32:15,021 - INFO -     num_rewards: Wasserstein=2.1300, KL=0.5357
+2025-11-09 22:32:15,021 - INFO -   MAE: 0.4034, RMSE: 0.4076, Coverage: 0.00
+2025-11-09 22:32:15,057 - INFO - 
+Completed 3/8 combinations
+2025-11-09 22:32:15,057 - INFO -   Trained: 3, Skipped: 0, Failed: 0
+2025-11-09 22:32:15,057 - INFO - 
+
+################################################################################
+2025-11-09 22:32:15,057 - INFO - COMBINATION 4/8
+2025-11-09 22:32:15,057 - INFO - ################################################################################
+2025-11-09 22:32:15,057 - INFO - 
+================================================================================
+2025-11-09 22:32:15,057 - INFO - Training: num_simulations=1000000, window_sites=100
+2025-11-09 22:32:15,057 - INFO - ================================================================================
+2025-11-09 22:32:15,059 - INFO -   Using pre-generated training data (subset: first 1000000 samples)
+2025-11-09 22:32:15,059 - INFO -   Subset shape: theta=torch.Size([1000000, 3]), x=torch.Size([1000000, 8])
+2025-11-09 22:32:15,059 - INFO -   Training SNLE (multi mode)...
+2025-11-09 23:07:08,739 - INFO - Training complete: val_loss=-23.2714
+2025-11-09 23:07:08,957 - INFO - Model saved to: snle_parameter_sweep/sweep_20251108_202608/model_sims1000000_sites100/model.pkl
+2025-11-09 23:07:08,957 - INFO - 
+Evaluating on test case: low_drift_high_bump
+2025-11-09 23:07:47,035 - INFO -   Computing generative metrics (100 patches)...
+2025-11-09 23:07:47,115 - INFO -     total_time: Wasserstein=0.9604, KL=0.3630
+2025-11-09 23:07:47,115 - INFO -     num_stops: Wasserstein=0.8900, KL=1.0638
+2025-11-09 23:07:47,115 - INFO -     num_rewards: Wasserstein=0.3200, KL=1.0139
+2025-11-09 23:07:47,115 - INFO -   MAE: 0.2366, RMSE: 0.2402, Coverage: 0.33
+2025-11-09 23:07:47,115 - INFO - 
+Evaluating on test case: high_drift_low_bump
+2025-11-09 23:08:22,024 - INFO -   Computing generative metrics (100 patches)...
+2025-11-09 23:08:22,032 - INFO -     total_time: Wasserstein=0.0495, KL=1.1304
+2025-11-09 23:08:22,032 - INFO -     num_stops: Wasserstein=0.0400, KL=0.1779
+2025-11-09 23:08:22,032 - INFO -     num_rewards: Wasserstein=0.0300, KL=0.0020
+2025-11-09 23:08:22,033 - INFO -   MAE: 0.1565, RMSE: 0.2466, Coverage: 1.00
+2025-11-09 23:08:22,033 - INFO - 
+Evaluating on test case: balanced
+2025-11-09 23:08:59,699 - INFO -   Computing generative metrics (100 patches)...
+2025-11-09 23:08:59,715 - INFO -     total_time: Wasserstein=0.2755, KL=0.9280
+2025-11-09 23:08:59,715 - INFO -     num_stops: Wasserstein=0.2200, KL=0.8057
+2025-11-09 23:08:59,715 - INFO -     num_rewards: Wasserstein=0.1800, KL=0.2265
+2025-11-09 23:08:59,715 - INFO -   MAE: 0.2559, RMSE: 0.3677, Coverage: 1.00
+2025-11-09 23:08:59,742 - INFO - 
+Completed 4/8 combinations
+2025-11-09 23:08:59,742 - INFO -   Trained: 4, Skipped: 0, Failed: 0
+2025-11-09 23:08:59,742 - INFO - 
+
+################################################################################
+2025-11-09 23:08:59,742 - INFO - COMBINATION 5/8
+2025-11-09 23:08:59,742 - INFO - ################################################################################
+2025-11-09 23:08:59,742 - INFO - 
+================================================================================
+2025-11-09 23:08:59,742 - INFO - Training: num_simulations=2000000, window_sites=25
+2025-11-09 23:08:59,742 - INFO - ================================================================================
+2025-11-09 23:08:59,744 - INFO -   Using pre-generated training data (subset: first 2000000 samples)
+2025-11-09 23:08:59,744 - INFO -   Subset shape: theta=torch.Size([2000000, 3]), x=torch.Size([2000000, 8])
+2025-11-09 23:08:59,744 - INFO -   Training SNLE (multi mode)...
+2025-11-10 00:20:11,141 - INFO - Training complete: val_loss=-22.5936
+2025-11-10 00:20:11,436 - INFO - Model saved to: snle_parameter_sweep/sweep_20251108_202608/model_sims2000000_sites25/model.pkl
+2025-11-10 00:20:11,436 - INFO - 
+Evaluating on test case: low_drift_high_bump
+2025-11-10 00:20:48,094 - INFO -   Computing generative metrics (100 patches)...
+2025-11-10 00:20:48,169 - INFO -     total_time: Wasserstein=10.1236, KL=16.5868
+2025-11-10 00:20:48,169 - INFO -     num_stops: Wasserstein=10.0900, KL=15.5841
+2025-11-10 00:20:48,170 - INFO -     num_rewards: Wasserstein=2.9700, KL=7.8630
+2025-11-10 00:20:48,170 - INFO -   MAE: 0.3969, RMSE: 0.4790, Coverage: 0.00
+2025-11-10 00:20:48,170 - INFO - 
+Evaluating on test case: high_drift_low_bump
+2025-11-10 00:21:45,082 - INFO -   Computing generative metrics (100 patches)...
+2025-11-10 00:21:59,224 - INFO -     total_time: Wasserstein=9261.9009, KL=23.0259
+2025-11-10 00:21:59,225 - INFO -     num_stops: Wasserstein=9263.4600, KL=23.0259
+2025-11-10 00:21:59,225 - INFO -     num_rewards: Wasserstein=65.2300, KL=23.0259
+2025-11-10 00:21:59,225 - INFO -   MAE: 0.7957, RMSE: 0.8941, Coverage: 0.00
+2025-11-10 00:21:59,225 - INFO - 
+Evaluating on test case: balanced
+2025-11-10 00:22:40,165 - INFO -   Computing generative metrics (100 patches)...
+2025-11-10 00:22:41,532 - INFO -     total_time: Wasserstein=903.4037, KL=23.0259
+2025-11-10 00:22:41,532 - INFO -     num_stops: Wasserstein=903.8800, KL=23.0259
+2025-11-10 00:22:41,532 - INFO -     num_rewards: Wasserstein=40.7100, KL=21.6890
+2025-11-10 00:22:41,532 - INFO -   MAE: 0.5747, RMSE: 0.6567, Coverage: 0.00
+2025-11-10 00:22:41,563 - INFO - 
+Completed 5/8 combinations
+2025-11-10 00:22:41,563 - INFO -   Trained: 5, Skipped: 0, Failed: 0
+2025-11-10 00:22:41,563 - INFO - 
+
+################################################################################
+2025-11-10 00:22:41,563 - INFO - COMBINATION 6/8
+2025-11-10 00:22:41,563 - INFO - ################################################################################
+2025-11-10 00:22:41,563 - INFO - 
+================================================================================
+2025-11-10 00:22:41,563 - INFO - Training: num_simulations=2000000, window_sites=50
+2025-11-10 00:22:41,563 - INFO - ================================================================================
+2025-11-10 00:22:41,564 - INFO -   Using pre-generated training data (subset: first 2000000 samples)
+2025-11-10 00:22:41,564 - INFO -   Subset shape: theta=torch.Size([2000000, 3]), x=torch.Size([2000000, 8])
+2025-11-10 00:22:41,564 - INFO -   Training SNLE (multi mode)...
+2025-11-10 01:33:35,428 - INFO - Training complete: val_loss=-22.9875
+2025-11-10 01:33:35,756 - INFO - Model saved to: snle_parameter_sweep/sweep_20251108_202608/model_sims2000000_sites50/model.pkl
+2025-11-10 01:33:35,756 - INFO - 
+Evaluating on test case: low_drift_high_bump
+2025-11-10 01:34:13,058 - INFO -   Computing generative metrics (100 patches)...
+2025-11-10 01:34:13,153 - INFO -     total_time: Wasserstein=5.9083, KL=2.7231
+2025-11-10 01:34:13,153 - INFO -     num_stops: Wasserstein=5.9100, KL=3.2308
+2025-11-10 01:34:13,153 - INFO -     num_rewards: Wasserstein=2.3100, KL=3.9662
+2025-11-10 01:34:13,153 - INFO -   MAE: 0.1852, RMSE: 0.2176, Coverage: 0.67
+2025-11-10 01:34:13,153 - INFO - 
+Evaluating on test case: high_drift_low_bump
+2025-11-10 01:34:48,314 - INFO -   Computing generative metrics (100 patches)...
+2025-11-10 01:34:48,320 - INFO -     total_time: Wasserstein=0.8587, KL=8.4669
+2025-11-10 01:34:48,320 - INFO -     num_stops: Wasserstein=0.9100, KL=1.7822
+2025-11-10 01:34:48,320 - INFO -     num_rewards: Wasserstein=0.7600, KL=1.3477
+2025-11-10 01:34:48,320 - INFO -   MAE: 0.8126, RMSE: 0.8199, Coverage: 0.00
+2025-11-10 01:34:48,320 - INFO - 
+Evaluating on test case: balanced
+2025-11-10 01:35:29,450 - INFO -   Computing generative metrics (100 patches)...
+2025-11-10 01:35:29,619 - INFO -     total_time: Wasserstein=95.6718, KL=22.4059
+2025-11-10 01:35:29,619 - INFO -     num_stops: Wasserstein=95.9100, KL=22.5914
+2025-11-10 01:35:29,619 - INFO -     num_rewards: Wasserstein=19.6500, KL=21.1425
+2025-11-10 01:35:29,619 - INFO -   MAE: 0.4254, RMSE: 0.4346, Coverage: 0.00
+2025-11-10 01:35:29,648 - INFO - 
+Completed 6/8 combinations
+2025-11-10 01:35:29,648 - INFO -   Trained: 6, Skipped: 0, Failed: 0
+2025-11-10 01:35:29,648 - INFO - 
+
+################################################################################
+2025-11-10 01:35:29,648 - INFO - COMBINATION 7/8
+2025-11-10 01:35:29,648 - INFO - ################################################################################
+2025-11-10 01:35:29,648 - INFO - 
+================================================================================
+2025-11-10 01:35:29,648 - INFO - Training: num_simulations=2000000, window_sites=75
+2025-11-10 01:35:29,648 - INFO - ================================================================================
+2025-11-10 01:35:29,650 - INFO -   Using pre-generated training data (subset: first 2000000 samples)
+2025-11-10 01:35:29,650 - INFO -   Subset shape: theta=torch.Size([2000000, 3]), x=torch.Size([2000000, 8])
+2025-11-10 01:35:29,650 - INFO -   Training SNLE (multi mode)...
+2025-11-10 02:46:34,404 - INFO - Training complete: val_loss=-22.3207
+2025-11-10 02:46:34,707 - INFO - Model saved to: snle_parameter_sweep/sweep_20251108_202608/model_sims2000000_sites75/model.pkl
+2025-11-10 02:46:34,707 - INFO - 
+Evaluating on test case: low_drift_high_bump
+2025-11-10 02:47:15,377 - INFO -   Computing generative metrics (100 patches)...
+2025-11-10 02:47:15,459 - INFO -     total_time: Wasserstein=2.2950, KL=0.4437
+2025-11-10 02:47:15,459 - INFO -     num_stops: Wasserstein=2.2800, KL=1.1179
+2025-11-10 02:47:15,459 - INFO -     num_rewards: Wasserstein=0.7000, KL=0.2830
+2025-11-10 02:47:15,459 - INFO -   MAE: 0.1059, RMSE: 0.1096, Coverage: 1.00
+2025-11-10 02:47:15,459 - INFO - 
+Evaluating on test case: high_drift_low_bump
+2025-11-10 02:47:51,038 - INFO -   Computing generative metrics (100 patches)...
+2025-11-10 02:47:51,046 - INFO -     total_time: Wasserstein=0.3986, KL=3.3019
+2025-11-10 02:47:51,046 - INFO -     num_stops: Wasserstein=0.4300, KL=0.5717
+2025-11-10 02:47:51,046 - INFO -     num_rewards: Wasserstein=0.4100, KL=0.5556
+2025-11-10 02:47:51,046 - INFO -   MAE: 0.5236, RMSE: 0.6699, Coverage: 0.00
+2025-11-10 02:47:51,046 - INFO - 
+Evaluating on test case: balanced
+2025-11-10 02:48:27,126 - INFO -   Computing generative metrics (100 patches)...
+2025-11-10 02:48:27,142 - INFO -     total_time: Wasserstein=0.2745, KL=1.2837
+2025-11-10 02:48:27,143 - INFO -     num_stops: Wasserstein=0.2000, KL=0.5996
+2025-11-10 02:48:27,143 - INFO -     num_rewards: Wasserstein=0.2400, KL=0.0593
+2025-11-10 02:48:27,143 - INFO -   MAE: 0.0791, RMSE: 0.1154, Coverage: 0.67
+2025-11-10 02:48:27,173 - INFO - 
+Completed 7/8 combinations
+2025-11-10 02:48:27,173 - INFO -   Trained: 7, Skipped: 0, Failed: 0
+2025-11-10 02:48:27,173 - INFO - 
+
+################################################################################
+2025-11-10 02:48:27,173 - INFO - COMBINATION 8/8
+2025-11-10 02:48:27,173 - INFO - ################################################################################
+2025-11-10 02:48:27,173 - INFO - 
+================================================================================
+2025-11-10 02:48:27,173 - INFO - Training: num_simulations=2000000, window_sites=100
+2025-11-10 02:48:27,173 - INFO - ================================================================================
+2025-11-10 02:48:27,175 - INFO -   Using pre-generated training data (subset: first 2000000 samples)
+2025-11-10 02:48:27,175 - INFO -   Subset shape: theta=torch.Size([2000000, 3]), x=torch.Size([2000000, 8])
+2025-11-10 02:48:27,175 - INFO -   Training SNLE (multi mode)...
+2025-11-10 03:59:13,223 - INFO - Training complete: val_loss=-23.8536
+2025-11-10 03:59:13,541 - INFO - Model saved to: snle_parameter_sweep/sweep_20251108_202608/model_sims2000000_sites100/model.pkl
+2025-11-10 03:59:13,541 - INFO - 
+Evaluating on test case: low_drift_high_bump
+2025-11-10 03:59:53,356 - INFO -   Computing generative metrics (100 patches)...
+2025-11-10 03:59:53,440 - INFO -     total_time: Wasserstein=3.8283, KL=0.5622
+2025-11-10 03:59:53,441 - INFO -     num_stops: Wasserstein=3.7100, KL=0.7909
+2025-11-10 03:59:53,441 - INFO -     num_rewards: Wasserstein=1.6500, KL=0.4970
+2025-11-10 03:59:53,441 - INFO -   MAE: 0.2645, RMSE: 0.2961, Coverage: 0.67
+2025-11-10 03:59:53,441 - INFO - 
+Evaluating on test case: high_drift_low_bump
+2025-11-10 04:00:28,546 - INFO -   Computing generative metrics (100 patches)...
+2025-11-10 04:00:28,555 - INFO -     total_time: Wasserstein=0.0878, KL=0.8029
+2025-11-10 04:00:28,555 - INFO -     num_stops: Wasserstein=0.1500, KL=0.0725
+2025-11-10 04:00:28,555 - INFO -     num_rewards: Wasserstein=0.1000, KL=0.0259
+2025-11-10 04:00:28,555 - INFO -   MAE: 0.1690, RMSE: 0.2203, Coverage: 1.00
+2025-11-10 04:00:28,555 - INFO - 
+Evaluating on test case: balanced
+2025-11-10 04:01:05,136 - INFO -   Computing generative metrics (100 patches)...
+2025-11-10 04:01:05,152 - INFO -     total_time: Wasserstein=0.6133, KL=0.9555
+2025-11-10 04:01:05,153 - INFO -     num_stops: Wasserstein=0.5900, KL=0.1432
+2025-11-10 04:01:05,153 - INFO -     num_rewards: Wasserstein=0.5900, KL=0.2884
+2025-11-10 04:01:05,153 - INFO -   MAE: 0.2893, RMSE: 0.4395, Coverage: 0.67
+2025-11-10 04:01:05,184 - INFO - 
+Completed 8/8 combinations
+2025-11-10 04:01:05,184 - INFO -   Trained: 8, Skipped: 0, Failed: 0
+2025-11-10 04:01:05,184 - INFO - 
+================================================================================
+2025-11-10 04:01:05,184 - INFO - GENERATING SUMMARY VISUALIZATIONS
+2025-11-10 04:01:05,184 - INFO - ================================================================================
+2025-11-10 04:01:05,184 - INFO - Creating summary plots...
+2025-11-10 04:01:05,580 - INFO -   Saved: summary_heatmaps.png
+2025-11-10 04:01:06,021 - INFO -   Saved: metrics_vs_num_simulations.png
+2025-11-10 04:01:06,480 - INFO -   Saved: metrics_vs_window_sites.png
+2025-11-10 04:01:06,965 - INFO -   Saved: per_test_case_breakdown.png
+2025-11-10 04:01:06,965 - INFO - Summary visualizations complete!
+2025-11-10 04:01:06,965 - INFO - 
+================================================================================
+2025-11-10 04:01:06,965 - INFO - PARAMETER SWEEP COMPLETE!
+2025-11-10 04:01:06,965 - INFO - Results saved to: snle_parameter_sweep/sweep_20251108_202608
+2025-11-10 04:01:06,965 - INFO - Successful combinations: 8/8
+2025-11-10 04:01:06,965 - INFO -   Newly trained: 8
+2025-11-10 04:01:06,965 - INFO -   Skipped (already existed): 0
+2025-11-10 04:01:06,965 - INFO -   Failed: 0
+2025-11-10 04:01:06,965 - INFO - ================================================================================
