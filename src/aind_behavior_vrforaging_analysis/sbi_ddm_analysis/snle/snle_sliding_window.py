@@ -14,6 +14,7 @@ from typing import Tuple, List, Dict, Optional
 
 def simulate_mouse_parameters(mouse_id: int, num_sessions: int = 10, 
                               base_params: Optional[torch.Tensor] = None,
+                              theta_ranges: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
                               param_std: float = 0.05) -> torch.Tensor:
     """
     Generate mouse-specific base parameters for all sessions.
@@ -22,11 +23,18 @@ def simulate_mouse_parameters(mouse_id: int, num_sessions: int = 10,
         mouse_id: Mouse identifier (0-4)
         num_sessions: Number of sessions per mouse
         base_params: Base [drift_rate, reward_bump, failure_bump] or None for default
+        theta_ranges: (low, high) parameter bounds for each of the three parameters
         param_std: Between-session variability
     
     Returns:
         params: (num_sessions, 3) tensor of session-level base parameters
     """
+
+    if theta_ranges is None:
+        low = torch.tensor([0.4, 0.05, 0.05])
+        high = torch.tensor([.6, .9, .9])
+        theta_ranges = (low, high)
+    
     if base_params is None:
         base_params = torch.tensor([0.2, 0.5, 0.2])
     
@@ -64,55 +72,22 @@ def simulate_session_with_evolution(simulator, base_params: torch.Tensor,
     """
     drift_rate, reward_bump, failure_bump = base_params
     
-    # Initialize storage
-    all_data = []
-    all_params = []
     
     if evolution_type == 'constant':
-        # No evolution
-        param_schedule = base_params.unsqueeze(0).repeat(num_sites, 1)
+        param_gen = simulator.walk_params(base_params, sigma=0, shift=0)
     
     elif evolution_type == 'gradual':
-        # Linear increase in drift rate
-        drift_schedule = torch.linspace(drift_rate, drift_rate + drift_increase, num_sites)
-        param_schedule = torch.stack([
-            drift_schedule,
-            torch.full((num_sites,), reward_bump),
-            torch.full((num_sites,), failure_bump)
-        ], dim=1)
-    
+        param_gen = simulator.walk_params(base_params, sigma=0, shift=drift_increase)
+
     elif evolution_type == 'stepwise':
-        # Two phases: low drift then high drift
-        transition_site = num_sites // 2
-        drift_low = drift_rate
-        drift_high = drift_rate + drift_increase
-        
-        drift_schedule = torch.cat([
-            torch.full((transition_site,), drift_low),
-            torch.full((num_sites - transition_site,), drift_high)
-        ])
-        
-        param_schedule = torch.stack([
-            drift_schedule,
-            torch.full((num_sites,), reward_bump),
-            torch.full((num_sites,), failure_bump)
-        ], dim=1)
-    
+        param_gen = simulator.step_change_params(2, theta_ranges = [base_params, base_params+torch.tensor([drift_increase, 0.0, 0.0])])
     else:
         raise ValueError(f"Unknown evolution_type: {evolution_type}")
     
-    # Simulate site by site
-    for site_idx in range(num_sites):
-        theta = param_schedule[site_idx]
-        param_gen = simulator.constant_params(theta)
-        
-        # Simulate single site
-        data, _ = simulator.simulate_trial(param_gen, window_sites=1, return_aggregate=False)
-        
-        all_data.append(data[0])  # Single site
-        all_params.append(theta)
+    # Simulate session data
+    session_data, _, true_params = simulator.simulate_trial(param_gen, window_sites=num_sites, return_aggregate=True)
     
-    return torch.stack(all_data), torch.stack(all_params)
+    return session_data, np.array(true_params)
 
 
 def simulate_full_dataset(simulator, num_mice: int = 5, num_sessions: int = 10,
@@ -351,9 +326,10 @@ def plot_parameter_evolution(results: Dict, true_params: Optional[torch.Tensor] 
                         alpha=0.3, label='±1 SD')
         
         # Plot true parameters if available
+        print(true_params)
         if true_params is not None:
             # Subsample true params to match window centers for visibility
-            ax.plot(range(len(true_params)), true_params[:, param_idx].numpy(),
+            ax.plot(range(len(true_params)), true_params[:, param_idx],
                    'k--', alpha=0.5, linewidth=1.5, label='True Parameter')
         
         ax.set_ylabel(param_name, fontsize=12)
