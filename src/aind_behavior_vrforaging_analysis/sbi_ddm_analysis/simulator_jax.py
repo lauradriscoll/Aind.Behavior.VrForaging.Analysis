@@ -155,7 +155,7 @@ class PatchForagingDDMJax:
         
         return summary_stats, actual_length
     
-    def _simulate_trial_static(self, key, theta, window_sites, max_patches=20):
+    def _simulate_trial_static(self, key, theta, window_sites, max_patches=[]):
         """
         Simulate trial until we have at least window_sites.
         Uses constant theta for all patches (for data generation).
@@ -164,12 +164,13 @@ class PatchForagingDDMJax:
             key: JAX random key
             theta: [drift_rate, reward_bump, failure_bump]
             window_sites: Target number of sites
-            max_patches: Maximum number of patches to simulate
-        
+            max_patches: Maximum number of patches to simulate (should be the same as window sites if always leave)
+
         Returns:
             summary_stats: Single-patch stats (3,) OR aggregate stats (8,)
         """
         # Generate keys for all patches
+        max_patches = window_sites
         keys = random.split(key, max_patches)
         
         # Simulate all patches (vectorized)

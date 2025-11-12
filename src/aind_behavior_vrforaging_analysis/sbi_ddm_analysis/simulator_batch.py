@@ -18,14 +18,6 @@ def reward_probability(num_rewards, initial_prob=0.8, decay_rate=-0.1):
 
 
 class PatchForagingDDM:
-    """
-    DDM for patch foraging where:
-    - Drift pushes toward leaving threshold
-    - Rewards push away from threshold (negative bump)
-    - Failures push toward threshold (positive bump)
-    - Animal leaves when evidence >= threshold
-    """
-    
     def __init__(self, 
                  initial_prob=0.8, 
                  decay_rate=-0.1,
@@ -44,60 +36,92 @@ class PatchForagingDDM:
         self.interval_min = interval_min
         self.interval_max = interval_max
     
-    def sample_inter_site_interval(self):
-        """Sample time between odor sites (truncated Gaussian)"""
-        return torch.clamp(
-            self.interval_mean + self.interval_std * torch.randn(1),
-            min=self.interval_min,
-            max=self.interval_max
-        ).item()
+    def sample_inter_site_intervals(self, batch_size: int):
+        """Sample inter-site intervals for all patches (vectorized)."""
+        dt = self.interval_mean + self.interval_std * torch.randn(batch_size)
+        return torch.clamp(dt, min=self.interval_min, max=self.interval_max)
     
-    def _simulate_one_patch(self, theta: torch.Tensor, global_time: float, patch_start_time: float) -> tuple:
+    def _simulate_patches_batch(self, thetas: torch.Tensor, max_sites: int = 200):
         """
-        Core method: simulate a single patch until animal leaves.
-        
+        Vectorized simulation of multiple patches simultaneously.
+
         Args:
-            theta: [drift_rate, reward_bump, failure_bump, noise_std]
-            global_time: current global time
-            patch_start_time: when current patch started
-        
+            thetas: (N, 4) tensor of parameters [drift_rate, reward_bump, failure_bump, noise_std]
+            max_sites: Maximum number of sites to simulate before truncation.
+
         Returns:
-            patch_data: list of [time_in_patch, reward, stopped] for each site
-            new_global_time: updated global time after patch
+            summary_stats: (N, 3) tensor [total_time, num_stops, num_rewards]
         """
-        drift_rate, reward_bump, failure_bump, noise_std = theta
-        evidence = self.start_point
-        num_rewards = 0
-        patch_data = []
-        
-        while True:
-            dt = self.sample_inter_site_interval()
-            global_time += dt
-            time_in_patch = global_time - patch_start_time
-            
-            # Accumulate evidence
-            evidence += drift_rate * dt
-            if noise_std > 0:
-                evidence += noise_std * torch.randn(1).item() * np.sqrt(dt)
-            
-            # Decision: leave or stop?
-            if evidence >= self.threshold:
-                patch_data.append([time_in_patch, 0, 0])  # Leave
+        device = thetas.device
+        N = thetas.shape[0]
+
+        drift_rate = thetas[:, 0]
+        reward_bump = thetas[:, 1]
+        failure_bump = thetas[:, 2]
+        noise_std = thetas[:, 3]
+
+        evidence = torch.full((N,), self.start_point, device=device)
+        num_rewards = torch.zeros(N, device=device)
+        total_time = torch.zeros(N, device=device)
+        num_stops = torch.zeros(N, device=device)
+        done = torch.zeros(N, dtype=torch.bool, device=device)
+
+        for _ in range(max_sites):
+            active = ~done
+            if not active.any():
                 break
-            else:
-                # Stop and check reward
-                reward_prob = reward_probability(num_rewards, self.initial_prob, self.decay_rate)
-                reward = int(torch.rand(1) < reward_prob)
-                patch_data.append([time_in_patch, reward, 1])
-                
-                # Update evidence
-                evidence += -reward_bump if reward else failure_bump
-                num_rewards += reward
-        total_time = global_time - patch_start_time
-        num_stops = len(patch_data)
-        summary_stats = torch.tensor([total_time, num_stops, num_rewards], dtype=torch.float32)
+
+            # Sample inter-site intervals for all active patches
+            dt = self.sample_inter_site_intervals(active.sum()).to(device)
+            total_time[active] += dt
+
+            # Update evidence
+            e = evidence[active]
+            dr = drift_rate[active]
+            ns = noise_std[active]
+
+            e += dr * dt + ns * torch.sqrt(dt) * torch.randn_like(dt)
+            evidence[active] = e
+
+            # Check for leaving threshold
+            left = e >= self.threshold
+            done_idx = torch.nonzero(active)[left]
+            done[done_idx] = True
+
+            # For those that didn’t leave: check reward
+            stay_idx = torch.nonzero(active)[~left].squeeze(-1)
+            if stay_idx.numel() > 0:
+                reward_probs = self.initial_prob * torch.exp(
+                    self.decay_rate * num_rewards[stay_idx]
+                )
+                rewards = (torch.rand_like(reward_probs) < reward_probs).float()
+                num_rewards[stay_idx] += rewards
+                num_stops[stay_idx] += 1
+
+                # Update evidence after reward/failure
+                e2 = evidence[stay_idx]
+                rb = reward_bump[stay_idx]
+                fb = failure_bump[stay_idx]
+                e2 += torch.where(rewards > 0, -rb, fb)
+                evidence[stay_idx] = e2
+
+        summary_stats = torch.stack(
+            [total_time, num_stops, num_rewards], dim=1
+        )
+        return summary_stats
     
-        return patch_data, global_time, summary_stats
+    def simulate_batch(self, theta_batch: torch.Tensor, max_sites: int = 200):
+        """
+        Simulate multiple independent patches in parallel.
+
+        Args:
+            theta_batch: (N, 4) tensor of patch parameters
+            max_sites: max sites per patch
+
+        Returns:
+            summary_stats: (N, 3) tensor [total_time, num_stops, num_rewards]
+        """
+        return self._simulate_patches_batch(theta_batch, max_sites=max_sites)
     
     # ===== Main Interface =====
     
@@ -117,13 +141,10 @@ class PatchForagingDDM:
         """
         data = []
         patch_stats_list = []
-        true_theta = []
         global_time = 0.0
         patch_start_time = 0.0
         
         for theta in param_generator:
-            
-            true_theta.append(theta)
             patch_data, global_time, summary_stats = self._simulate_one_patch(
                 theta, global_time, patch_start_time
             )
@@ -144,7 +165,7 @@ class PatchForagingDDM:
             # Handle single patch case (std would be NaN)
             if len(patch_stats) == 1:
                 aggregate_stats = torch.tensor([
-                    patch_stats[0, 0].item(),  # total_time
+                    patch_stats[0, 0].item(),  # total_time (no mean needed)
                     0.0,                        # std total_time = 0 for single patch
                     patch_stats[0, 1].item(),  # num_stops
                     0.0,                        # std num_stops = 0
@@ -165,10 +186,10 @@ class PatchForagingDDM:
                     float(len(patch_stats)),
                 ], dtype=torch.float32)
             
-            return data_tensor, aggregate_stats, true_theta
+            return data_tensor, aggregate_stats
         else:
             # Return only first patch statistics
-            return data_tensor, patch_stats_list[0], true_theta
+            return data_tensor, patch_stats_list[0]
         
         # ===== Parameter Generators =====
 
@@ -222,27 +243,41 @@ class PatchForagingDDM:
                 for _ in range(regime_length):
                     yield current_theta.clone()
 
-
     # ===== Convenience Wrappers =====
 
     def simulate_with_walk(self, theta_mean: torch.Tensor, window_sites: int,
                             sigma: float = 0.0, shift: float = 0.0) -> torch.Tensor:
-        """Simulate with parameters evolving via a random walk."""
+        """
+        Convenience: simulate with walk around theta_mean. 
+        Note: This is not random walk because sigma can be 0 and shift moves 
+              parameters deterministically in a particular direction.
 
-        param_gen = self.evolve_params(
-            mode="walk", theta_init=theta_mean, sigma=sigma, shift=shift
-        )
+        Args:
+            theta_mean: Mean [drift_rate, reward_bump, failure_bump]
+            window_sites: Number of sites to simulate
+            sigma: Random walk step size
+            shift: directional shift (using 'shift' instead of 'drift' to avoid confusion)
+        
+        Returns:
+            (window_sites, 3) tensor
+        """
+        param_gen = self.walk_params(theta_mean, sigma=sigma, shift=shift)
         return self.simulate_trial(param_gen, window_sites)
 
     def simulate_with_steps(self, window_sites: int,
                             mean_patches_per_regime: int = 10) -> torch.Tensor:
-        """Simulate with stepwise regime changes in parameters."""
-
-        param_gen = self.evolve_params(
-            mode="step", mean_patches_per_regime=mean_patches_per_regime
-        )
+        """
+        Convenience: simulate with step changes in parameters.
+        
+        Args:
+            window_sites: Number of sites to simulate
+            mean_patches_per_regime: Average patches before regime change
+        
+        Returns:
+            (window_sites, 3) tensor
+        """
+        param_gen = self.step_change_params(mean_patches_per_regime)
         return self.simulate_trial(param_gen, window_sites)
-
 
 def create_prior():
     """
@@ -254,8 +289,8 @@ def create_prior():
     from sbi.utils.torchutils import BoxUniform
     
     return BoxUniform(
-        low=torch.tensor([0.01, 0.01, 0.0, 0.0]),
-        high=torch.tensor([1.5, 1.5, 1.5, 0.1])
+        low=torch.tensor([0.01, 0.01, 0.0]),
+        high=torch.tensor([1.5, 1.5, 1.5])
     )
 
 # ===== Tests =====
