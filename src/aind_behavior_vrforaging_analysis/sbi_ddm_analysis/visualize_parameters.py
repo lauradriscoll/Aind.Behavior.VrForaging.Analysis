@@ -10,7 +10,6 @@ Updates:
 - Updated to new evolve_params API
 """
 
-# CRITICAL: Set JAX platform BEFORE any imports
 import os
 os.environ['JAX_PLATFORMS'] = 'cpu'
 
@@ -89,63 +88,6 @@ def plot_single_window(ax, window, theta, title=None):
     ]
     ax.legend(handles=legend_elements, loc='upper right', fontsize=6)
 
-
-def simulate_single_trial(simulator, theta, window_sites, rng_key):
-    """
-    Simulate a single trial using JAX simulator.
-    
-    Args:
-        simulator: PatchForagingDDM_JAX instance
-        theta: (4,) array or tensor [drift_rate, reward_bump, failure_bump, noise_std]
-        window_sites: number of sites to simulate
-        rng_key: JAX random key
-    
-    Returns:
-        window: (window_sites, 3) torch tensor
-        stats: (3,) torch tensor
-    """
-    # Convert theta to JAX array
-    if torch.is_tensor(theta):
-        theta_jax = jnp.array(theta.numpy())
-    else:
-        theta_jax = jnp.array(theta)
-    
-    # Simulate multiple patches until we get enough sites
-    # Use batch simulation for efficiency
-    num_patches_estimate = 500  # Rough estimate
-    theta_batch = jnp.tile(theta_jax, (num_patches_estimate, 1))
-    
-    patch_data_batch, num_sites_batch, stats_batch = simulator.simulate_batch(
-        theta_batch, rng_key, return_aggregate=False
-    )
-    
-    # Concatenate patches until we have enough sites
-    all_sites = []
-    total_sites = 0
-    
-    for i in range(num_patches_estimate):
-        n_sites = int(num_sites_batch[i])
-        patch_data = patch_data_batch[i, :n_sites, :]
-        all_sites.append(patch_data)
-        total_sites += n_sites
-        
-        if total_sites >= window_sites:
-            break
-    
-    # Concatenate and truncate
-    if len(all_sites) > 0:
-        all_sites_concat = jnp.concatenate(all_sites, axis=0)
-        window_data = all_sites_concat[:window_sites]
-    else:
-        window_data = jnp.zeros((window_sites, 3))
-    
-    # Convert to torch tensors
-    window = torch.from_numpy(np.array(window_data)).float()
-    stats = torch.from_numpy(np.array(stats_batch[0])).float()
-    
-    return window, stats
-
-
 def plot_parameter_grid_2d(
     param1_name: str,
     param2_name: str,
@@ -183,7 +125,7 @@ def plot_parameter_grid_2d(
     param2_values = np.linspace(param2_range[0], param2_range[1], grid_size)
     
     # Initialize simulator and RNG
-    simulator = PatchForagingDDM_JAX()
+    simulator = PatchForagingDDM_JAX(max_sites_per_window=window_sites)
     rng_key = random.PRNGKey(rng_seed)
     
     # Create figure
@@ -211,9 +153,15 @@ def plot_parameter_grid_2d(
             
             # Split RNG key
             rng_key, subkey = random.split(rng_key)
+
+            # Convert theta to JAX array
+            if torch.is_tensor(theta):
+                theta_jax = jnp.array(theta.numpy())
+            else:
+                theta_jax = jnp.array(theta)
             
             # Simulate window
-            window, _ = simulate_single_trial(simulator, theta, window_sites, subkey)
+            window, _ = simulator.simulate_one_window(theta_jax, subkey)
             
             # Plot
             ax = fig.add_subplot(gs[grid_size-1-j, i])  # Flip j for standard orientation
@@ -379,9 +327,15 @@ def plot_parameter_effect_summary(
             
             # Split RNG key
             rng_key, subkey = random.split(rng_key)
+
+            # Convert theta to JAX array
+            if torch.is_tensor(theta):
+                theta_jax = jnp.array(theta.numpy())
+            else:
+                theta_jax = jnp.array(theta)
             
             # Simulate
-            window, _ = simulate_single_trial(simulator, theta, window_sites, subkey)
+            window, _ = simulator.simulate_one_window(theta_jax, subkey)
             
             # Plot
             ax = axes[param_idx, i]
@@ -423,9 +377,15 @@ def plot_noise_comparison(
         
         # Split RNG key
         rng_key, subkey = random.split(rng_key)
-        
+
+        # Convert theta to JAX array
+        if torch.is_tensor(theta):
+            theta_jax = jnp.array(theta.numpy())
+        else:
+            theta_jax = jnp.array(theta)
+
         # Simulate
-        window, _ = simulate_single_trial(simulator, theta, window_sites, subkey)
+        window, _ = simulator.simulate_one_window(theta_jax, subkey)
         
         # Plot
         ax = axes[i]
