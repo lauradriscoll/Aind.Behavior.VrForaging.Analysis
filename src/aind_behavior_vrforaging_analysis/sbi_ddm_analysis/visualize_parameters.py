@@ -3,13 +3,25 @@ Visualization tool for understanding parameter effects on behavior.
 
 Creates grid plots showing how different parameter combinations
 affect the simulated behavioral trajectories.
+
+Updates:
+- Supports 4D theta [drift_rate, reward_bump, failure_bump, noise_std]
+- Uses JAX simulator for fast generation
+- Updated to new evolve_params API
 """
+
+# CRITICAL: Set JAX platform BEFORE any imports
+import os
+os.environ['JAX_PLATFORMS'] = 'cpu'
 
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
-from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM
+from jax import random
+import jax.numpy as jnp
+
+from simulator_jax import PatchForagingDDM_JAX
 
 
 def plot_single_window(ax, window, theta, title=None):
@@ -18,13 +30,19 @@ def plot_single_window(ax, window, theta, title=None):
     
     Args:
         ax: matplotlib axis
-        window: (100, 3) tensor [time, reward, stopped]
-        theta: (3,) tensor [drift_rate, reward_bump, failure_bump]
+        window: (N, 3) array [time, reward, stopped]
+        theta: (4,) tensor [drift_rate, reward_bump, failure_bump, noise_std]
         title: optional title
     """
-    times = window[:, 0].numpy()
-    rewards = window[:, 1].numpy()
-    stopped = window[:, 2].numpy()
+    # Convert to numpy if needed
+    if torch.is_tensor(window):
+        window = window.numpy()
+    if torch.is_tensor(theta):
+        theta = theta.numpy()
+    
+    times = window[:, 0]
+    rewards = window[:, 1]
+    stopped = window[:, 2]
     
     # Find patch boundaries (where stopped=0)
     leave_indices = np.where(stopped == 0)[0]
@@ -55,8 +73,9 @@ def plot_single_window(ax, window, theta, title=None):
     if title:
         ax.set_title(title, fontsize=9)
     
-    # Add parameter info
-    param_text = f'drift={theta[0]:.2f}\nreward={theta[1]:.2f}\nfailure={theta[2]:.2f}'
+    # Add parameter info (all 4 parameters)
+    param_text = (f'drift={theta[0]:.2f}\nreward={theta[1]:.2f}\n'
+                  f'failure={theta[2]:.2f}\nnoise={theta[3]:.3f}')
     ax.text(0.02, 0.98, param_text, transform=ax.transAxes,
             fontsize=7, verticalalignment='top',
             bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
@@ -71,43 +90,102 @@ def plot_single_window(ax, window, theta, title=None):
     ax.legend(handles=legend_elements, loc='upper right', fontsize=6)
 
 
+def simulate_single_trial(simulator, theta, window_sites, rng_key):
+    """
+    Simulate a single trial using JAX simulator.
+    
+    Args:
+        simulator: PatchForagingDDM_JAX instance
+        theta: (4,) array or tensor [drift_rate, reward_bump, failure_bump, noise_std]
+        window_sites: number of sites to simulate
+        rng_key: JAX random key
+    
+    Returns:
+        window: (window_sites, 3) torch tensor
+        stats: (3,) torch tensor
+    """
+    # Convert theta to JAX array
+    if torch.is_tensor(theta):
+        theta_jax = jnp.array(theta.numpy())
+    else:
+        theta_jax = jnp.array(theta)
+    
+    # Simulate multiple patches until we get enough sites
+    # Use batch simulation for efficiency
+    num_patches_estimate = 500  # Rough estimate
+    theta_batch = jnp.tile(theta_jax, (num_patches_estimate, 1))
+    
+    patch_data_batch, num_sites_batch, stats_batch = simulator.simulate_batch(
+        theta_batch, rng_key, return_aggregate=False
+    )
+    
+    # Concatenate patches until we have enough sites
+    all_sites = []
+    total_sites = 0
+    
+    for i in range(num_patches_estimate):
+        n_sites = int(num_sites_batch[i])
+        patch_data = patch_data_batch[i, :n_sites, :]
+        all_sites.append(patch_data)
+        total_sites += n_sites
+        
+        if total_sites >= window_sites:
+            break
+    
+    # Concatenate and truncate
+    if len(all_sites) > 0:
+        all_sites_concat = jnp.concatenate(all_sites, axis=0)
+        window_data = all_sites_concat[:window_sites]
+    else:
+        window_data = jnp.zeros((window_sites, 3))
+    
+    # Convert to torch tensors
+    window = torch.from_numpy(np.array(window_data)).float()
+    stats = torch.from_numpy(np.array(stats_batch[0])).float()
+    
+    return window, stats
+
+
 def plot_parameter_grid_2d(
     param1_name: str,
     param2_name: str,
     param1_range: tuple,
     param2_range: tuple,
-    fixed_param_value: float,
+    fixed_params: dict,
     grid_size: int = 5,
-    save_path: str = 'parameter_grid.png'
+    window_sites: int = 100,
+    save_path: str = 'parameter_grid.png',
+    rng_seed: int = 42
 ):
     """
     Create grid of behavioral trajectories across 2D parameter space.
     
     Args:
-        param1_name: 'drift_rate', 'reward_bump', or 'failure_bump'
-        param2_name: 'drift_rate', 'reward_bump', or 'failure_bump'
+        param1_name: 'drift_rate', 'reward_bump', 'failure_bump', or 'noise_std'
+        param2_name: 'drift_rate', 'reward_bump', 'failure_bump', or 'noise_std'
         param1_range: (min, max) for param1
         param2_range: (min, max) for param2
-        fixed_param_value: Value for the third parameter
+        fixed_params: dict with fixed values for other parameters
         grid_size: Number of values per dimension (e.g., 5 = 5x5 grid)
+        window_sites: Number of sites to simulate per trajectory
         save_path: Where to save the plot
+        rng_seed: Random seed for JAX
     """
-    param_names = ['drift_rate', 'reward_bump', 'failure_bump']
+    param_names = ['drift_rate', 'reward_bump', 'failure_bump', 'noise_std']
     param_indices = {name: i for i, name in enumerate(param_names)}
     
     # Get indices
     idx1 = param_indices[param1_name]
     idx2 = param_indices[param2_name]
-    fixed_idx = [i for i in range(3) if i not in [idx1, idx2]][0]
-    fixed_name = param_names[fixed_idx]
     
     # Create parameter grids
     param1_values = np.linspace(param1_range[0], param1_range[1], grid_size)
     param2_values = np.linspace(param2_range[0], param2_range[1], grid_size)
     
-    # Initialize simulator
-    simulator = PatchForagingDDM()
-
+    # Initialize simulator and RNG
+    simulator = PatchForagingDDM_JAX()
+    rng_key = random.PRNGKey(rng_seed)
+    
     # Create figure
     fig = plt.figure(figsize=(15, 15))
     gs = GridSpec(grid_size, grid_size, figure=fig, hspace=0.3, wspace=0.3)
@@ -115,23 +193,27 @@ def plot_parameter_grid_2d(
     print(f"\nGenerating {grid_size}x{grid_size} parameter grid...")
     print(f"  {param1_name}: {param1_range}")
     print(f"  {param2_name}: {param2_range}")
-    print(f"  {fixed_name}: {fixed_param_value} (fixed)")
+    print(f"  Fixed parameters: {fixed_params}")
     
     # Generate trajectories for each parameter combination
     for i, p1_val in enumerate(param1_values):
         for j, p2_val in enumerate(param2_values):
-            # Construct theta
-            theta = torch.zeros(3)
+            # Construct theta (4D)
+            theta = torch.zeros(4)
+            
+            # Set varied parameters
             theta[idx1] = p1_val
             theta[idx2] = p2_val
-            theta[fixed_idx] = fixed_param_value
+            
+            # Set fixed parameters
+            for param_name, param_value in fixed_params.items():
+                theta[param_indices[param_name]] = param_value
+            
+            # Split RNG key
+            rng_key, subkey = random.split(rng_key)
             
             # Simulate window
-            window, _ = simulator.simulate_with_walk(
-                theta_mean=theta,
-                window_sites=100,
-                sigma=0.01  # Small random walk for clearer visualization
-            )
+            window, _ = simulate_single_trial(simulator, theta, window_sites, subkey)
             
             # Plot
             ax = fig.add_subplot(gs[grid_size-1-j, i])  # Flip j for standard orientation
@@ -148,9 +230,10 @@ def plot_parameter_grid_2d(
                 ax.set_ylabel(f'{param2_name}={p2_val:.2f}\nTime in Patch', fontsize=8)
     
     # Overall title
+    fixed_str = ', '.join([f'{k}={v:.2f}' for k, v in fixed_params.items()])
     fig.suptitle(
         f'Behavioral Trajectories Across Parameter Space\n'
-        f'{param1_name} vs {param2_name} (fixed {fixed_name}={fixed_param_value:.2f})',
+        f'{param1_name} vs {param2_name} (fixed: {fixed_str})',
         fontsize=14, fontweight='bold'
     )
     
@@ -161,22 +244,25 @@ def plot_parameter_grid_2d(
 
 def plot_all_parameter_combinations(
     grid_size: int = 5,
-    save_dir: str = 'analysis_results/visualize_parameters/w_noise'
+    window_sites: int = 100,
+    save_dir: str = 'parameter_visualizations'
 ):
     """
-    Create all three 2D parameter grids.
+    Create all six 2D parameter grids (all pairwise combinations).
 
     Generates:
-    1. drift_rate vs reward_bump (fixed failure_bump)
-    2. drift_rate vs failure_bump (fixed reward_bump)
-    3. reward_bump vs failure_bump (fixed drift_rate)
+    1. drift_rate vs reward_bump
+    2. drift_rate vs failure_bump
+    3. drift_rate vs noise_std
+    4. reward_bump vs failure_bump
+    5. reward_bump vs noise_std
+    6. failure_bump vs noise_std
     """
-
     # Ensure save directory exists
     os.makedirs(save_dir, exist_ok=True)
 
     print("="*60)
-    print("Generating Parameter Space Visualizations")
+    print("Generating Parameter Space Visualizations (4D Theta)")
     print("="*60)
 
     # Grid 1: drift_rate vs reward_bump
@@ -186,8 +272,9 @@ def plot_all_parameter_combinations(
         param2_name='reward_bump',
         param1_range=(0.1, 1.5),
         param2_range=(0.1, 1.5),
-        fixed_param_value=0.3,  # failure_bump
+        fixed_params={'failure_bump': 0.3, 'noise_std': 0.05},
         grid_size=grid_size,
+        window_sites=window_sites,
         save_path=f'{save_dir}/grid_drift_vs_reward.png'
     )
     
@@ -197,22 +284,63 @@ def plot_all_parameter_combinations(
         param1_name='drift_rate',
         param2_name='failure_bump',
         param1_range=(0.1, 1.5),
-        param2_range=(0.1, 1.5),
-        fixed_param_value=0.6,  # reward_bump
+        param2_range=(0.0, 1.5),
+        fixed_params={'reward_bump': 0.6, 'noise_std': 0.05},
         grid_size=grid_size,
+        window_sites=window_sites,
         save_path=f'{save_dir}/grid_drift_vs_failure.png'
     )
     
-    # Grid 3: reward_bump vs failure_bump
-    print("\n3. reward_bump vs failure_bump")
+    # Grid 3: drift_rate vs noise_std
+    print("\n3. drift_rate vs noise_std")
+    plot_parameter_grid_2d(
+        param1_name='drift_rate',
+        param2_name='noise_std',
+        param1_range=(0.1, 1.5),
+        param2_range=(0.0, 0.1),
+        fixed_params={'reward_bump': 0.6, 'failure_bump': 0.3},
+        grid_size=grid_size,
+        window_sites=window_sites,
+        save_path=f'{save_dir}/grid_drift_vs_noise.png'
+    )
+    
+    # Grid 4: reward_bump vs failure_bump
+    print("\n4. reward_bump vs failure_bump")
     plot_parameter_grid_2d(
         param1_name='reward_bump',
         param2_name='failure_bump',
         param1_range=(0.1, 1.5),
-        param2_range=(0.1, 1.5),
-        fixed_param_value=0.5,  # drift_rate
+        param2_range=(0.0, 1.5),
+        fixed_params={'drift_rate': 0.5, 'noise_std': 0.05},
         grid_size=grid_size,
+        window_sites=window_sites,
         save_path=f'{save_dir}/grid_reward_vs_failure.png'
+    )
+    
+    # Grid 5: reward_bump vs noise_std
+    print("\n5. reward_bump vs noise_std")
+    plot_parameter_grid_2d(
+        param1_name='reward_bump',
+        param2_name='noise_std',
+        param1_range=(0.1, 1.5),
+        param2_range=(0.0, 0.1),
+        fixed_params={'drift_rate': 0.5, 'failure_bump': 0.3},
+        grid_size=grid_size,
+        window_sites=window_sites,
+        save_path=f'{save_dir}/grid_reward_vs_noise.png'
+    )
+    
+    # Grid 6: failure_bump vs noise_std
+    print("\n6. failure_bump vs noise_std")
+    plot_parameter_grid_2d(
+        param1_name='failure_bump',
+        param2_name='noise_std',
+        param1_range=(0.0, 1.5),
+        param2_range=(0.0, 0.1),
+        fixed_params={'drift_rate': 0.5, 'reward_bump': 0.6},
+        grid_size=grid_size,
+        window_sites=window_sites,
+        save_path=f'{save_dir}/grid_failure_vs_noise.png'
     )
     
     print("\n" + "="*60)
@@ -220,21 +348,24 @@ def plot_all_parameter_combinations(
     print("="*60)
 
 
-def plot_parameter_effect_summary(save_dir: str = 'analysis_results/visualize_parameters/w_noise'):
+def plot_parameter_effect_summary(
+    window_sites: int = 100,
+    save_dir: str = 'parameter_visualizations'
+):
     """
     Create summary figure showing effect of each parameter individually.
     """
-
     os.makedirs(save_dir, exist_ok=True)
-    save_path = f'{save_dir}/parameter_effects.png'
+    save_path = f'{save_dir}/parameter_effects_summary.png'
 
-    simulator = PatchForagingDDM()
+    simulator = PatchForagingDDM_JAX()
+    rng_key = random.PRNGKey(42)
     
-    fig, axes = plt.subplots(3, 3, figsize=(15, 12))
+    fig, axes = plt.subplots(4, 3, figsize=(15, 16))
     
-    param_names = ['drift_rate', 'reward_bump', 'failure_bump']
-    param_ranges = [(0.2, 1.5), (0.2, 1.5), (0.0, 1.5)]
-    base_theta = torch.tensor([0.5, 0.6, 0.3])
+    param_names = ['drift_rate', 'reward_bump', 'failure_bump', 'noise_std']
+    param_ranges = [(0.2, 1.5), (0.2, 1.5), (0.0, 1.2), (0.0, 0.1)]
+    base_theta = torch.tensor([0.5, 0.6, 0.3, 0.05])
     
     print("\nGenerating parameter effect summary...")
     
@@ -246,47 +377,110 @@ def plot_parameter_effect_summary(save_dir: str = 'analysis_results/visualize_pa
             theta = base_theta.clone()
             theta[param_idx] = param_val
             
+            # Split RNG key
+            rng_key, subkey = random.split(rng_key)
+            
             # Simulate
-            window, _, _ = simulator.simulate_window_with_random_walk(
-                theta_mean=theta,
-                window_sites=100,
-                random_walk_sigma=0.01
-            )
+            window, _ = simulate_single_trial(simulator, theta, window_sites, subkey)
             
             # Plot
             ax = axes[param_idx, i]
             plot_single_window(ax, window, theta, 
-                             title=f'{param_name}={param_val:.2f}')
+                             title=f'{param_name}={param_val:.3f}')
     
-    fig.suptitle('Effect of Each Parameter on Behavior', fontsize=14, fontweight='bold')
+    fig.suptitle('Effect of Each Parameter on Behavior (4D Theta)', 
+                 fontsize=14, fontweight='bold')
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     print(f"Summary plot saved to {save_path}")
     plt.close()
 
 
+def plot_noise_comparison(
+    window_sites: int = 100,
+    save_dir: str = 'parameter_visualizations'
+):
+    """
+    Create focused comparison of different noise levels.
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = f'{save_dir}/noise_comparison.png'
+
+    simulator = PatchForagingDDM_JAX()
+    rng_key = random.PRNGKey(42)
+    
+    fig, axes = plt.subplots(2, 3, figsize=(15, 8))
+    axes = axes.flatten()
+    
+    base_theta = torch.tensor([0.5, 0.6, 0.3, 0.0])  # Start with no noise
+    noise_levels = [0.0, 0.02, 0.04, 0.06, 0.08, 0.1]
+    
+    print("\nGenerating noise comparison...")
+    
+    for i, noise_std in enumerate(noise_levels):
+        theta = base_theta.clone()
+        theta[3] = noise_std
+        
+        # Split RNG key
+        rng_key, subkey = random.split(rng_key)
+        
+        # Simulate
+        window, _ = simulate_single_trial(simulator, theta, window_sites, subkey)
+        
+        # Plot
+        ax = axes[i]
+        plot_single_window(ax, window, theta, 
+                         title=f'Noise σ = {noise_std:.3f}')
+    
+    fig.suptitle('Effect of Noise on Behavioral Trajectories', 
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    print(f"Noise comparison plot saved to {save_path}")
+    plt.close()
+
+
 if __name__ == "__main__":
     import sys
-    import os
     
     if len(sys.argv) > 1 and sys.argv[1] == 'summary':
-        # Quick summary figure
+        # Quick summary figures
         plot_parameter_effect_summary()
-
+        plot_noise_comparison()
+        
         print("\nVisualization complete!")
         print(f"Generated:")
-        print(f"  - parameter_effects.png")
+        print(f"  - parameter_effects_summary.png")
+        print(f"  - noise_comparison.png")
+        
+    elif len(sys.argv) > 1 and sys.argv[1] == 'noise':
+        # Just noise comparison
+        plot_noise_comparison()
+        
+        print("\nVisualization complete!")
+        print(f"Generated:")
+        print(f"  - noise_comparison.png")
+        
     else:
         # Full grid analysis
         grid_size = 5
         if len(sys.argv) > 1:
-            grid_size = int(sys.argv[1])
+            try:
+                grid_size = int(sys.argv[1])
+            except ValueError:
+                print(f"Invalid grid_size: {sys.argv[1]}, using default 5")
         
         plot_all_parameter_combinations(grid_size=grid_size)
+        plot_parameter_effect_summary()
+        plot_noise_comparison()
         
         print("\nVisualization complete!")
-        print(f"Generated:")
+        print(f"Generated 6 parameter grids + 2 summary plots:")
         print(f"  - grid_drift_vs_reward.png")
         print(f"  - grid_drift_vs_failure.png")
+        print(f"  - grid_drift_vs_noise.png")
         print(f"  - grid_reward_vs_failure.png")
-        print(f"  - parameter_effects.png")
+        print(f"  - grid_reward_vs_noise.png")
+        print(f"  - grid_failure_vs_noise.png")
+        print(f"  - parameter_effects_summary.png")
+        print(f"  - noise_comparison.png")

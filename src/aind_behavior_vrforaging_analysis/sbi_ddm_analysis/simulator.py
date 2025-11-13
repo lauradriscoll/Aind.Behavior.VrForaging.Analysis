@@ -172,7 +172,7 @@ class PatchForagingDDM:
         
         # ===== Parameter Generators =====
 
-    def evolve_params(
+    def evolve_params(self,
         mode: str,
         theta_init: torch.Tensor = None,
         sigma: float = 0.0,
@@ -262,58 +262,31 @@ def create_prior():
 
 if __name__ == "__main__":
     print("="*60)
-    print("Testing Refactored Simulator")
+    print("Testing Simulator")
     print("="*60)
     
     simulator = PatchForagingDDM()
     
     # Test 1: Walk parameters
     print("\n1. Walk parameters")
-    theta_mean = torch.tensor([0.5, 0.6, 0.2])
-    data = simulator.simulate_window_with_walk(theta_mean, window_sites=100, sigma=0.0, shift=0.0)
-    print(f"   Shape: {data.shape}")
-    print(f"   Patches: {(data[:, 2] == 0).sum().item()}")
+    theta_mean = torch.tensor([0.5, 0.6, 0.2, 0.05])
+    data_tensor, aggregate_stats, true_theta = simulator.simulate_with_walk(theta_mean, window_sites=100, sigma=0.0, shift=0.0)
+    print(f"   Shape: {data_tensor.shape}")
+    print(f"   Patches: {(data_tensor[:, 2] == 0).sum().item()}")
 
     # Test 2: Step changes
     print("\n2. Step change parameters")
-    data = simulator.simulate_with_steps(window_sites=100, mean_patches_per_regime=5)
-    print(f"   Shape: {data.shape}")
-    print(f"   Patches: {(data[:, 2] == 0).sum().item()}")
+    data_tensor, aggregate_stats, true_theta = simulator.simulate_with_steps(window_sites=100, mean_patches_per_regime=5)
+    print(f"   Shape: {data_tensor.shape}")
+    print(f"   Patches: {(data_tensor[:, 2] == 0).sum().item()}")
 
     # Test 3: Manual parameter generator usage
     print("\n3. Manual generator usage")
-    param_gen = simulator.step_change_params(mean_patches_per_regime=3)
-    data = simulator.simulate_trial(param_gen, window_sites=50)
-    print(f"   Shape: {data.shape}")
-    print(f"   Patches: {(data[:, 2] == 0).sum().item()}")
-
-    # Test 4: Backward compatibility
-    print("\n4. Backward compatibility (__call__)")
-    data = simulator(theta, max_sites=50)
-    print(f"   Shape: {data.shape}")
-
-    # Test 5: Batch simulation
-    print("\n5. Batch simulation")
-    theta_batch = torch.rand(5, 3)
-    data_batch = simulator(theta_batch, max_sites=50)
-    print(f"   Shape: {data_batch.shape}")
+    param_gen = simulator.evolve_params(mode="step", mean_patches_per_regime=3)
+    data_tensor, aggregate_stats, true_theta= simulator.simulate_trial(param_gen, window_sites=50)
+    print(f"   Shape: {data_tensor.shape}")
+    print(f"   Patches: {(data_tensor[:, 2] == 0).sum().item()}")
     
     print("\n" + "="*60)
     print("All tests passed!")
     print("="*60)
-    
-    # Show example usage
-    print("\n" + "="*60)
-    print("Example Usage")
-    print("="*60)
-    print("""
-# Walk parameters:
-data = simulator.simulate_window_with_walk(theta_mean, window_sites=100, sigma=0.0, shift=0.0)
-
-# Step changes:
-data = simulator.simulate_with_steps(window_sites=100, mean_patches_per_regime=10)
-
-# Custom generator:
-param_gen = simulator.walk_params(theta_init, sigma=0.1)
-data = simulator.simulate_trial(param_gen, window_sites=100)
-    """)

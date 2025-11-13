@@ -3,7 +3,16 @@ Parameter sweep analysis for SNLE: How do num_simulations and window_sites
 affect posterior accuracy and generative quality?
 
 Purpose: Systematic evaluation of SNLE training parameters on inference quality.
+
+Updates:
+- Uses JAX simulator for fast training data generation
+- Supports 4D theta [drift_rate, reward_bump, failure_bump, noise_std]
+- Updated to use new evolve_params API
 """
+
+# CRITICAL: Set JAX platform BEFORE any imports
+import os
+os.environ['JAX_PLATFORMS'] = 'cpu'
 
 import torch
 import numpy as np
@@ -11,95 +20,32 @@ from scipy.stats import wasserstein_distance
 from scipy.special import kl_div
 import pandas as pd
 import matplotlib.pyplot as plt
-import os
 from datetime import datetime
 import logging
 import pickle
+from jax import random
 
 # Import SNLE modules
 from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM, create_prior
-from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_inference import train_snle, infer_parameters_snle, generate_likelihood_training_data
-from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_utils import plot_training_history
+from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator_jax import PatchForagingDDM_JAX
+from snle_inference import train_snle, infer_parameters_snle
+from snle_utils import plot_training_history
 
 # Parameter grid
-NUM_SIMULATIONS = [1000000, 2000000]
-WINDOW_SITES = [25, 50, 75,100]
+NUM_SIMULATIONS = [100000, 500000, 1000000]  # Use large numbers with JAX!
+WINDOW_SITES = [25, 50, 75, 100]
 
-# Test cases (all values ≤ 1)
+# Test cases (4D theta: drift_rate, reward_bump, failure_bump, noise_std)
 TEST_CASES = [
-    ("low_drift_high_bump", torch.tensor([0.2, 0.8, 0.3])),
-    ("high_drift_low_bump", torch.tensor([0.8, 0.2, 0.3])),
-    ("balanced", torch.tensor([0.5, 0.5, 0.3])),
+    ("low_drift_high_bump", torch.tensor([0.2, 0.8, 0.3, 0.05])),
+    ("high_drift_low_bump", torch.tensor([0.8, 0.2, 0.3, 0.05])),
+    ("balanced", torch.tensor([0.5, 0.5, 0.3, 0.05])),
+    ("high_noise", torch.tensor([0.5, 0.5, 0.3, 0.1])),
 ]
 
 
-def pre_generate_training_data(results_dir, logger):
-    """
-    Pre-generate all training data needed for the sweep.
-    
-    Generates max(NUM_SIMULATIONS) samples for each window_sites value.
-    Saves data to results_dir for reuse.
-    
-    Returns:
-        dict mapping window_sites -> (theta_samples, x_samples, x_mean, x_std)
-    """
-    logger.info("\n" + "="*80)
-    logger.info("PRE-GENERATING TRAINING DATA")
-    logger.info("="*80)
-    
-    simulator = PatchForagingDDM()
-    prior = create_prior()
-    
-    max_sims = max(NUM_SIMULATIONS)
-    training_data = {}
-    
-    for window_sites in WINDOW_SITES:
-        logger.info(f"\nGenerating data for window_sites={window_sites} (n={max_sims})...")
-        
-        # Check if data already exists
-        data_path = os.path.join(results_dir, f'training_data_sites{window_sites}.pkl')
-        
-        if os.path.exists(data_path):
-            logger.info(f"  Loading existing data from {data_path}")
-            with open(data_path, 'rb') as f:
-                data = pickle.load(f)
-            training_data[window_sites] = data
-        else:
-            # Generate new data
-            theta_samples, x_samples, x_mean, x_std = generate_likelihood_training_data(
-                simulator, prior, 
-                num_simulations=max_sims,
-                window_sites=window_sites,
-                mode='multi'
-            )
-            
-            data = {
-                'theta_samples': theta_samples,
-                'x_samples': x_samples,
-                'x_mean': x_mean,
-                'x_std': x_std,
-                'num_simulations': max_sims,
-                'window_sites': window_sites,
-            }
-            
-            # Save data
-            with open(data_path, 'wb') as f:
-                pickle.dump(data, f)
-            logger.info(f"  Saved to {data_path}")
-            
-            training_data[window_sites] = data
-    
-    logger.info("\n" + "="*80)
-    logger.info("TRAINING DATA GENERATION COMPLETE")
-    logger.info("="*80)
-    
-    return training_data
-
-
 def setup_logging(results_dir):
-    """
-    Setup logging to both console and file.
-    """
+    """Setup logging to both console and file."""
     log_file = os.path.join(results_dir, 'sweep_log.txt')
     
     # Create logger
@@ -132,7 +78,6 @@ def setup_logging(results_dir):
 def compute_kl_divergence_hist(true_samples, posterior_samples, num_bins=30):
     """
     Compute KL divergence between two distributions using histogram approximation.
-    
     KL(P || Q) where P is true and Q is posterior
     """
     # Determine common bin edges
@@ -161,28 +106,27 @@ def compute_generative_metrics(simulator, true_theta, posterior_samples, logger,
     """
     Compare distributions of data generated from true params vs posterior samples.
     
+    Uses JAX simulator for fast batch generation.
     Computes Wasserstein distance and KL divergence for each summary statistic.
     """
     logger.info(f"  Computing generative metrics ({num_patches} patches)...")
     
-    # Generate from true parameters
-    true_patches = []
-    for _ in range(num_patches):
-        global_time = 0.0
-        patch_start_time = 0.0
-        _, _, stats = simulator._simulate_one_patch(true_theta, global_time, patch_start_time)
-        true_patches.append(stats)
-    true_data = torch.stack(true_patches).numpy()
+    # Use JAX simulator for fast batch generation
+    import jax.numpy as jnp
+    simulator_jax = PatchForagingDDM_JAX()
+    rng_key = random.PRNGKey(0)
     
-    # Generate from posterior samples
-    posterior_patches = []
-    for i in range(num_patches):
-        theta_sample = posterior_samples[i % len(posterior_samples)]
-        global_time = 0.0
-        patch_start_time = 0.0
-        _, _, stats = simulator._simulate_one_patch(theta_sample, global_time, patch_start_time)
-        posterior_patches.append(stats)
-    posterior_data = torch.stack(posterior_patches).numpy()
+    # Generate from true parameters (batch)
+    rng_key, subkey = random.split(rng_key)
+    true_theta_batch = jnp.tile(jnp.array(true_theta.numpy()), (num_patches, 1))
+    _, _, true_stats = simulator_jax.simulate_batch(true_theta_batch, subkey, return_aggregate=False)
+    true_data = np.array(true_stats)
+    
+    # Generate from posterior samples (batch)
+    rng_key, subkey = random.split(rng_key)
+    posterior_theta_batch = jnp.array(posterior_samples[:num_patches].numpy())
+    _, _, posterior_stats = simulator_jax.simulate_batch(posterior_theta_batch, subkey, return_aggregate=False)
+    posterior_data = np.array(posterior_stats)
     
     # Compute Wasserstein distance and KL divergence for each feature
     # Features: [total_time, num_stops, num_rewards]
@@ -235,12 +179,12 @@ def evaluate_on_test_case(simulator, inference, x_mean, x_std,
     Returns:
         dict with all metrics
     """
-    # 1. Generate observed data
-    param_gen = simulator.walk_params(true_theta)
-    _, observed_stats = simulator.simulate_trial(
+    # 1. Generate observed data using PyTorch simulator
+    param_gen = simulator.evolve_params(mode='walk', theta_init=true_theta, sigma=0.0)
+    _, observed_stats, _ = simulator.simulate_trial(
         param_gen, 
         window_sites=100,  # Fixed for testing
-        return_aggregate=True
+        return_aggregate=False  # Use single-patch stats
     )
     
     # 2. Infer parameters
@@ -290,9 +234,7 @@ def evaluate_on_test_case(simulator, inference, x_mean, x_std,
 
 
 def save_intermediate_result(result, results_dir):
-    """
-    Save individual result as pickle and append summary to CSV.
-    """
+    """Save individual result as pickle and append summary to CSV."""
     if result is None:
         return
     
@@ -341,9 +283,6 @@ def check_existing_model(num_sims, window_sites, results_dir):
     
     Returns:
         (exists, model_dir, model_dict) tuple
-        - exists: bool, whether model exists
-        - model_dir: path to model directory
-        - model_dict: loaded model dict if exists, None otherwise
     """
     model_dir = os.path.join(results_dir, f'model_sims{num_sims}_sites{window_sites}')
     model_path = os.path.join(model_dir, 'model.pkl')
@@ -359,17 +298,19 @@ def check_existing_model(num_sims, window_sites, results_dir):
     return False, model_dir, None
 
 
-def train_and_evaluate(num_sims, window_sites, results_dir, logger, training_data_dict, skip_if_exists=True):
+def train_and_evaluate(num_sims, window_sites, results_dir, logger, 
+                      rng_key, skip_if_exists=True, use_jax=True):
     """
     Train SNLE model and evaluate on all test cases.
     
     Args:
         num_sims: Number of training simulations
-        window_sites: Number of sites per simulation
+        window_sites: Number of sites per simulation (only used for PyTorch)
         results_dir: Directory to save results
         logger: Logger instance
-        training_data_dict: Pre-generated training data dict
+        rng_key: JAX random key
         skip_if_exists: If True, skip training if model already exists
+        use_jax: If True, use JAX simulator for fast data generation
     
     Returns:
         dict with all metrics for this parameter combination
@@ -390,11 +331,10 @@ def train_and_evaluate(num_sims, window_sites, results_dir, logger, training_dat
         x_mean = existing_model['x_mean']
         x_std = existing_model['x_std']
         
-        # Check if we have training metrics, otherwise create dummy ones
+        # Check if we have training metrics
         if 'training_metrics' in existing_model:
             training_metrics = existing_model['training_metrics']
         else:
-            # Legacy model without training metrics saved
             training_metrics = {
                 'final_train_loss': None,
                 'final_val_loss': None,
@@ -407,59 +347,30 @@ def train_and_evaluate(num_sims, window_sites, results_dir, logger, training_dat
             logger.info(f"⚠️  Model exists but skip_if_exists=False, retraining...")
         
         # Setup
-        from sbi.inference import SNLE
-        simulator = PatchForagingDDM()
+        simulator = PatchForagingDDM_JAX() if use_jax else PatchForagingDDM()
         prior = create_prior()
         
         # Create model-specific directory
         os.makedirs(model_dir, exist_ok=True)
         
-        # Get pre-generated training data and subset it
-        logger.info(f"  Using pre-generated training data (subset: first {num_sims} samples)")
-        full_data = training_data_dict[window_sites]
-        
-        theta_samples = full_data['theta_samples'][:num_sims]
-        x_samples = full_data['x_samples'][:num_sims]
-        
-        # Use the normalization from the full dataset for consistency
-        x_mean = full_data['x_mean']
-        x_std = full_data['x_std']
-        
-        logger.info(f"  Subset shape: theta={theta_samples.shape}, x={x_samples.shape}")
+        # Split RNG key for this training run
+        rng_key, subkey = random.split(rng_key)
         
         # Train model
         try:
-            # Initialize SNLE
-            logger.info(f"  Training SNLE (multi mode)...")
-            inference = SNLE(prior=prior)
+            logger.info(f"  Training SNLE (single mode, use_jax={use_jax})...")
             
-            # Add training data
-            inference.append_simulations(theta_samples, x_samples)
-            
-            # Train with more detailed output
-            likelihood_estimator = inference.train(
-                training_batch_size=50,
+            _, inference, x_mean, x_std, history = train_snle(
+                simulator=simulator,
+                prior=prior,
+                num_simulations=num_sims,
+                window_sites=window_sites,
+                mode='single',
                 max_num_epochs=50,
-                show_train_summary=True,
-                stop_after_epochs=20,  # Early stopping patience
+                batch_size=50,
+                use_jax=use_jax,
+                rng_key=subkey if use_jax else None
             )
-            
-            # Extract training history with correct keys (handle lists)
-            best_val = inference._summary['best_validation_loss']
-            if isinstance(best_val, list):
-                best_val = best_val[0] if len(best_val) > 0 else None
-            
-            epochs_trained = inference._summary['epochs_trained']
-            if isinstance(epochs_trained, list):
-                epochs_trained = epochs_trained[0] if len(epochs_trained) > 0 else len(inference._summary['training_loss'])
-            
-            history = {
-                'train_loss': inference._summary['training_loss'],
-                'val_loss': inference._summary['validation_loss'],
-                'epochs': list(range(len(inference._summary['training_loss']))),
-                'best_val_loss': best_val,
-                'epochs_trained': epochs_trained,
-            }
             
             # Store training metrics
             training_metrics = {
@@ -469,11 +380,11 @@ def train_and_evaluate(num_sims, window_sites, results_dir, logger, training_dat
                 'epochs_trained': history['epochs_trained'],
             }
             
-            logger.info(f"Training complete: val_loss={training_metrics['final_val_loss']:.4f}")
+            logger.info(f"  Training complete: val_loss={training_metrics['final_val_loss']:.4f}")
             
             # Save training history plot
             plot_path = os.path.join(model_dir, 'training_history.png')
-            plot_training_history(history, mode='multi', save_path=plot_path)
+            plot_training_history(history, mode='single', save_path=plot_path)
             
             # Save the trained model
             model_save_path = os.path.join(model_dir, 'model.pkl')
@@ -481,27 +392,29 @@ def train_and_evaluate(num_sims, window_sites, results_dir, logger, training_dat
                 'inference': inference,
                 'x_mean': x_mean,
                 'x_std': x_std,
-                'mode': 'multi',
+                'mode': 'single',
                 'num_simulations': num_sims,
                 'window_sites': window_sites,
                 'training_metrics': training_metrics,
+                'use_jax': use_jax,
             }
             torch.save(model_dict, model_save_path)
-            logger.info(f"Model saved to: {model_save_path}")
+            logger.info(f"  Model saved to: {model_save_path}")
             
         except Exception as e:
-            logger.error(f"Training failed: {e}")
+            logger.error(f"  Training failed: {e}")
             import traceback
             logger.error(traceback.format_exc())
-            return None
+            return None, rng_key
     
-    # Setup simulator for evaluation
+    # Setup simulator for evaluation (use PyTorch for consistency)
     simulator = PatchForagingDDM()
     
     # Evaluate on all test cases
     test_results = []
     for test_name, true_theta in TEST_CASES:
         logger.info(f"\nEvaluating on test case: {test_name}")
+        logger.info(f"  True theta: {true_theta}")
         
         try:
             metrics = evaluate_on_test_case(
@@ -511,7 +424,7 @@ def train_and_evaluate(num_sims, window_sites, results_dir, logger, training_dat
             test_results.append(metrics)
             
         except Exception as e:
-            logger.error(f"Evaluation failed for {test_name}: {e}")
+            logger.error(f"  Evaluation failed for {test_name}: {e}")
             import traceback
             logger.error(traceback.format_exc())
             test_results.append(None)
@@ -523,24 +436,17 @@ def train_and_evaluate(num_sims, window_sites, results_dir, logger, training_dat
         'training_metrics': training_metrics,
         'test_results': test_results,
         'model_dir': model_dir,
+        'use_jax': use_jax,
     }
     
     # Save intermediate result
     save_intermediate_result(result, results_dir)
     
-    return result
+    return result, rng_key
 
 
 def create_summary_plots(results_dir, logger):
-    """
-    Create summary visualizations from sweep results.
-    
-    Generates:
-    1. Heatmaps: MAE, RMSE, Coverage vs (num_sims, window_sites)
-    2. Heatmaps: Wasserstein, KL divergence vs (num_sims, window_sites)
-    3. Line plots: Metrics vs num_sims (for each window_sites)
-    4. Line plots: Metrics vs window_sites (for each num_sims)
-    """
+    """Create summary visualizations from sweep results."""
     logger.info("Creating summary plots...")
     
     # Load summary CSV
@@ -574,7 +480,7 @@ def create_summary_plots(results_dir, logger):
         
         im = axes[idx].imshow(pivot.values, aspect='auto', cmap='viridis', origin='lower')
         axes[idx].set_xticks(range(len(pivot.columns)))
-        axes[idx].set_xticklabels(pivot.columns, rotation=45, ha='right')
+        axes[idx].set_xticklabels([f'{int(x/1000)}K' for x in pivot.columns], rotation=45, ha='right')
         axes[idx].set_yticks(range(len(pivot.index)))
         axes[idx].set_yticklabels(pivot.index)
         axes[idx].set_xlabel('num_simulations', fontsize=10)
@@ -596,7 +502,7 @@ def create_summary_plots(results_dir, logger):
     plt.close()
     logger.info(f"  Saved: summary_heatmaps.png")
     
-    # 2. Line plots: Metrics vs num_sims (separate line for each window_sites)
+    # 2. Line plots: Metrics vs num_sims
     fig, axes = plt.subplots(2, 3, figsize=(18, 12))
     axes = axes.flatten()
     
@@ -619,94 +525,19 @@ def create_summary_plots(results_dir, logger):
     plt.close()
     logger.info(f"  Saved: metrics_vs_num_simulations.png")
     
-    # 3. Line plots: Metrics vs window_sites (separate line for each num_sims)
-    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-    axes = axes.flatten()
-    
-    for idx, (metric, label) in enumerate(zip(metrics, metric_labels)):
-        for num_sims in sorted(df_avg['num_simulations'].unique()):
-            data = df_avg[df_avg['num_simulations'] == num_sims].sort_values('window_sites')
-            axes[idx].plot(data['window_sites'], data[metric], 
-                          marker='o', label=f'sims={num_sims}', linewidth=2)
-        
-        axes[idx].set_xlabel('window_sites', fontsize=10)
-        axes[idx].set_ylabel(label, fontsize=10)
-        axes[idx].set_title(f'{label} vs window_sites', fontsize=12, fontweight='bold')
-        axes[idx].legend(fontsize=8)
-        axes[idx].grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    sites_path = os.path.join(results_dir, 'metrics_vs_window_sites.png')
-    plt.savefig(sites_path, dpi=150, bbox_inches='tight')
-    plt.close()
-    logger.info(f"  Saved: metrics_vs_window_sites.png")
-    
-    # 4. Per-test-case breakdown
-    fig, axes = plt.subplots(len(TEST_CASES), 3, figsize=(18, 4*len(TEST_CASES)))
-    if len(TEST_CASES) == 1:
-        axes = axes.reshape(1, -1)
-    
-    for test_idx, (test_name, _) in enumerate(TEST_CASES):
-        df_test = df[df['test_case'] == test_name].groupby(['num_simulations', 'window_sites']).agg({
-            'mean_mae': 'mean',
-            'mean_wasserstein': 'mean',
-            'mean_kl': 'mean',
-        }).reset_index()
-        
-        # MAE vs num_sims
-        ax = axes[test_idx, 0]
-        for window_sites in sorted(df_test['window_sites'].unique()):
-            data = df_test[df_test['window_sites'] == window_sites].sort_values('num_simulations')
-            ax.plot(data['num_simulations'], data['mean_mae'], marker='o', label=f'sites={window_sites}', linewidth=2)
-        ax.set_xlabel('num_simulations')
-        ax.set_ylabel('Mean MAE')
-        ax.set_title(f'{test_name}: MAE vs num_simulations', fontweight='bold')
-        ax.legend(fontsize=8)
-        ax.grid(True, alpha=0.3)
-        ax.set_xscale('log')
-        
-        # Wasserstein vs num_sims
-        ax = axes[test_idx, 1]
-        for window_sites in sorted(df_test['window_sites'].unique()):
-            data = df_test[df_test['window_sites'] == window_sites].sort_values('num_simulations')
-            ax.plot(data['num_simulations'], data['mean_wasserstein'], marker='o', label=f'sites={window_sites}', linewidth=2)
-        ax.set_xlabel('num_simulations')
-        ax.set_ylabel('Mean Wasserstein')
-        ax.set_title(f'{test_name}: Wasserstein vs num_simulations', fontweight='bold')
-        ax.legend(fontsize=8)
-        ax.grid(True, alpha=0.3)
-        ax.set_xscale('log')
-        
-        # KL vs num_sims
-        ax = axes[test_idx, 2]
-        for window_sites in sorted(df_test['window_sites'].unique()):
-            data = df_test[df_test['window_sites'] == window_sites].sort_values('num_simulations')
-            ax.plot(data['num_simulations'], data['mean_kl'], marker='o', label=f'sites={window_sites}', linewidth=2)
-        ax.set_xlabel('num_simulations')
-        ax.set_ylabel('Mean KL')
-        ax.set_title(f'{test_name}: KL vs num_simulations', fontweight='bold')
-        ax.legend(fontsize=8)
-        ax.grid(True, alpha=0.3)
-        ax.set_xscale('log')
-    
-    plt.tight_layout()
-    testcase_path = os.path.join(results_dir, 'per_test_case_breakdown.png')
-    plt.savefig(testcase_path, dpi=150, bbox_inches='tight')
-    plt.close()
-    logger.info(f"  Saved: per_test_case_breakdown.png")
-    
     logger.info("Summary visualizations complete!")
 
 
-def run_parameter_sweep(base_dir='snle_parameter_sweep', skip_if_exists=True, resume_dir=None):
+def run_parameter_sweep(base_dir='snle_parameter_sweep', skip_if_exists=True, 
+                       resume_dir=None, use_jax=True):
     """
     Run full parameter sweep experiment.
-    Creates timestamped folder with all results, or resumes from existing directory.
     
     Args:
         base_dir: Base directory for saving results (only used if resume_dir is None)
         skip_if_exists: If True, skip training for models that already exist
         resume_dir: If provided, resume from this existing results directory
+        use_jax: If True, use JAX simulator for fast data generation
     """
     # Create or use existing results directory
     if resume_dir is not None:
@@ -729,10 +560,11 @@ def run_parameter_sweep(base_dir='snle_parameter_sweep', skip_if_exists=True, re
     logger.info(f"num_simulations: {NUM_SIMULATIONS}")
     logger.info(f"window_sites: {WINDOW_SITES}")
     logger.info(f"Test cases: {len(TEST_CASES)}")
+    logger.info(f"Using JAX: {use_jax}")
     logger.info("="*80)
     
-    # Pre-generate all training data
-    training_data_dict = pre_generate_training_data(results_dir, logger)
+    # Initialize JAX random key
+    rng_key = random.PRNGKey(42)
     
     # Initialize results storage
     all_results = []
@@ -751,13 +583,15 @@ def run_parameter_sweep(base_dir='snle_parameter_sweep', skip_if_exists=True, re
             logger.info(f"COMBINATION {combination_idx}/{total_combinations}")
             logger.info(f"{'#'*80}")
             
-            # Check if already exists before calling train_and_evaluate
+            # Check if already exists
             exists, _, _ = check_existing_model(num_sims, window_sites, results_dir)
             if exists and skip_if_exists:
                 num_skipped += 1
             
-            result = train_and_evaluate(num_sims, window_sites, results_dir, logger, 
-                                       training_data_dict, skip_if_exists=skip_if_exists)
+            result, rng_key = train_and_evaluate(
+                num_sims, window_sites, results_dir, logger, rng_key,
+                skip_if_exists=skip_if_exists, use_jax=use_jax
+            )
             
             if result is not None:
                 all_results.append(result)
@@ -789,35 +623,41 @@ def run_parameter_sweep(base_dir='snle_parameter_sweep', skip_if_exists=True, re
 
 
 if __name__ == "__main__":
-    import sys
     import argparse
     
     parser = argparse.ArgumentParser(description='SNLE Parameter Sweep Analysis')
     parser.add_argument('mode', nargs='?', default='full', choices=['test', 'force', 'full'],
                        help='Run mode: test (quick test), force (retrain all), full (default, skip existing)')
     parser.add_argument('--resume', type=str, default=None,
-                       help='Resume from existing results directory (e.g., snle_parameter_sweep/sweep_20241108_143022)')
+                       help='Resume from existing results directory')
+    parser.add_argument('--no-jax', action='store_true',
+                       help='Use PyTorch simulator instead of JAX (slower)')
     
     args = parser.parse_args()
+    
+    use_jax = not args.no_jax
     
     if args.mode == 'test':
         # Quick test with reduced parameters
         print("Running quick test with reduced parameters...")
-        NUM_SIMULATIONS = [1000, 5000]
-        WINDOW_SITES = [10, 50]
+        NUM_SIMULATIONS = [10000, 50000]
+        WINDOW_SITES = [25, 50]
         results_dir, all_results = run_parameter_sweep(
             base_dir='snle_parameter_sweep_test',
-            resume_dir=args.resume
+            resume_dir=args.resume,
+            use_jax=use_jax
         )
     elif args.mode == 'force':
         # Force retraining even if models exist
         print("Running full sweep with forced retraining...")
         results_dir, all_results = run_parameter_sweep(
             skip_if_exists=False,
-            resume_dir=args.resume
+            resume_dir=args.resume,
+            use_jax=use_jax
         )
     else:
         # Full parameter sweep (default: skip existing models)
         results_dir, all_results = run_parameter_sweep(
-            resume_dir=args.resume
+            resume_dir=args.resume,
+            use_jax=use_jax
         )

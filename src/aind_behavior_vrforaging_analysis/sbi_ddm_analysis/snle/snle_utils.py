@@ -94,8 +94,8 @@ def plot_posterior_pairplot(prior, posterior_samples, true_theta, save_path=None
     
     Args:
         prior: Prior distribution
-        posterior_samples: (N, 3) posterior samples
-        true_theta: (3,) true parameter values
+        posterior_samples: (N, 4) posterior samples
+        true_theta: (4,) true parameter values
         save_path: Optional path to save figure
     """
     # Generate prior samples for comparison
@@ -112,7 +112,7 @@ def plot_posterior_pairplot(prior, posterior_samples, true_theta, save_path=None
         contour_offdiag=dict(levels=[0.95]),
         points_colors=["red"], 
         points_offdiag=dict(marker="*", markersize=15), 
-        labels=[r"drift_rate", r"reward_bump", r"failure_bump"],
+        labels=[r"drift_rate", r"reward_bump", r"failure_bump", r"noise_std"],
         figsize=(10, 10)
     )
     
@@ -240,14 +240,14 @@ def plot_posterior_distributions(posterior_samples, true_theta=None, save_path=N
     Plot marginal posterior distributions for each parameter.
     
     Args:
-        posterior_samples: (N, 3) posterior samples
+        posterior_samples: (N, 4) posterior samples
         true_theta: Optional true parameter values
         save_path: Optional path to save figure
     """
     samples_np = posterior_samples.cpu().numpy()
-    param_names = ['drift_rate', 'reward_bump', 'failure_bump']
+    param_names = ['drift_rate', 'reward_bump', 'failure_bump', 'noise_std']
     
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    fig, axes = plt.subplots(1, 4, figsize=(20, 4))
     
     for i, (ax, name) in enumerate(zip(axes, param_names)):
         ax.hist(samples_np[:, i], bins=50, density=True, alpha=0.7, 
@@ -279,15 +279,15 @@ def print_inference_summary(posterior_samples, true_theta):
     Print summary statistics of inference results.
     
     Args:
-        posterior_samples: (N, 3) posterior samples
-        true_theta: (3,) true parameter values
+        posterior_samples: (N, 4) posterior samples
+        true_theta: (4,) true parameter values
     """
     posterior_mean = posterior_samples.mean(dim=0)
     posterior_std = posterior_samples.std(dim=0)
     absolute_error = (posterior_mean - true_theta).abs()
     relative_error = absolute_error / (true_theta.abs() + 1e-6)
     
-    param_names = ['drift_rate', 'reward_bump', 'failure_bump']
+    param_names = ['drift_rate', 'reward_bump', 'failure_bump', 'noise_std']
     
     print(f"\n{'='*60}")
     print("INFERENCE RESULTS")
@@ -444,8 +444,8 @@ if __name__ == "__main__":
         'epochs_trained': 5,
     }
     
-    true_theta = torch.tensor([0.6, 0.8, 0.3])
-    posterior_samples = torch.randn(1000, 3) * 0.1 + true_theta
+    true_theta = torch.tensor([0.6, 0.8, 0.3, 0.05])
+    posterior_samples = torch.randn(1000, 4) * 0.1 + true_theta
     
     print("\n1. Testing training history plot...")
     plot_training_history(training_history, mode='single')

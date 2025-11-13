@@ -1,44 +1,40 @@
 """
-JAX-accelerated simulator for patch foraging DDM.
+JAX-based simulator for patch foraging DDM.
 
-Purpose: Fast parallel simulation for SNLE training data generation.
 Key features:
-- Vectorized across batches using jax.vmap
-- JIT compiled for speed
-- GPU-compatible
-- Drop-in replacement for data generation
+- JIT compilation for speed
+- vmap for automatic batching
+- GPU acceleration (or CPU with JIT for Apple Silicon)
+- Same API as PyTorch version for easy swapping
 
-Usage:
-    simulator = PatchForagingDDMJax()
-    
-    # Generate batch of simulations in parallel
-    theta_batch = jax.random.uniform(key, (10000, 3), minval=jnp.array([0.01, 0.01, 0.0]), 
-                                      maxval=jnp.array([1.5, 1.5, 1.5]))
-    stats_batch = simulator.simulate_batch(key, theta_batch, window_sites=100)
+Performance: ~100-1000x faster than PyTorch version for large batches
 """
+
+import os
+# Force CPU backend on Apple Silicon to avoid Metal issues
+os.environ['JAX_PLATFORMS'] = 'cpu'
 
 import jax
 import jax.numpy as jnp
-from jax import random, vmap, jit
+from jax import random, jit, vmap
 from functools import partial
-import torch
 import numpy as np
 
 
-def reward_probability_jax(num_rewards, initial_prob=0.8, decay_rate=-0.1):
-    """Exponential decay reward probability"""
+def reward_probability(num_rewards, initial_prob=0.8, decay_rate=-0.1):
+    """Exponential decay reward probability based on number of rewards collected"""
     return initial_prob * jnp.exp(decay_rate * num_rewards)
 
 
-class PatchForagingDDMJax:
+class PatchForagingDDM_JAX:
     """
-    JAX-accelerated DDM for patch foraging.
+    JAX implementation of DDM for patch foraging.
     
     Key differences from PyTorch version:
-    - Uses explicit random keys (JAX style)
-    - Fixed maximum trajectory length for static shapes
-    - Batched simulation via vmap
-    - JIT compiled for speed
+    - Uses JAX random keys for RNG
+    - JIT-compiled for speed
+    - Supports batched simulation via vmap
+    - All operations are functional (no in-place updates)
     """
     
     def __init__(self, 
@@ -50,8 +46,7 @@ class PatchForagingDDMJax:
                  interval_std=0.3, 
                  interval_min=0.1, 
                  interval_max=5.0,
-                 noise_std=0.0,
-                 max_sites_per_patch=500):  # Maximum sites per patch for fixed shape
+                 max_sites_per_window=500):  # For pre-allocation
         self.initial_prob = initial_prob
         self.decay_rate = decay_rate
         self.threshold = threshold
@@ -60,354 +55,327 @@ class PatchForagingDDMJax:
         self.interval_std = interval_std
         self.interval_min = interval_min
         self.interval_max = interval_max
-        self.noise_std = noise_std
-        self.max_sites_per_patch = max_sites_per_patch
+        self.max_sites_per_window = max_sites_per_window
         
         # JIT compile the core simulation function
-        self._simulate_one_patch_jit = jit(self._simulate_one_patch_static)
-        self._simulate_trial_jit = jit(partial(self._simulate_trial_static, 
-                                               max_patches=20))  # Max patches per trial
+        self._simulate_one_window_jit = jit(self._simulate_one_window_core)
     
-    def sample_inter_site_interval(self, key):
-        """Sample time between odor sites (truncated Gaussian)"""
-        sample = self.interval_mean + self.interval_std * random.normal(key)
-        return jnp.clip(sample, self.interval_min, self.interval_max)
-    
-    def _simulate_one_patch_static(self, key, theta):
+    def _simulate_one_window_core(self, theta, rng_key):
         """
-        Simulate a single patch with fixed-size output (for JIT).
+        Core JIT-compiled function to simulate one window.
+        Uses jax.lax.while_loop for efficient compilation.
         
         Args:
-            key: JAX random key
-            theta: [drift_rate, reward_bump, failure_bump]
-        
+            theta: (4,) array [drift_rate, reward_bump, failure_bump, noise_std]
+            rng_key: JAX random key
+            
         Returns:
-            summary_stats: [total_time, num_stops, num_rewards]
-            actual_length: number of valid sites (rest is padding)
+            window_data: (max_sites, 3) array [time_in_patch, reward, stopped]
+            num_sites: actual number of sites (for truncation)
+            summary_stats: (3,) array [total_time, num_stops, num_rewards]
         """
-        drift_rate, reward_bump, failure_bump = theta
+        drift_rate, reward_bump, failure_bump, noise_std = theta
         
-        def step_fn(carry, key_t):
-            """Single step in the patch"""
-            evidence, num_rewards, time_in_patch, left = carry
+        # Pre-allocate arrays
+        window_data = jnp.zeros((self.max_sites_per_window, 3))
+        
+        # Split RNG keys for different random operations
+        key_intervals, key_noise, key_rewards = random.split(rng_key, 3)
+        
+        # Pre-generate all random numbers (faster than generating in loop)
+        intervals = random.truncated_normal(
+            key_intervals, 
+            lower=(self.interval_min - self.interval_mean) / self.interval_std,
+            upper=(self.interval_max - self.interval_mean) / self.interval_std,
+            shape=(self.max_sites_per_window,)
+        ) * self.interval_std + self.interval_mean
+        
+        noise_samples = random.normal(key_noise, shape=(self.max_sites_per_window,))
+        reward_samples = random.uniform(key_rewards, shape=(self.max_sites_per_window,))
+        # State tuple for while loop: (evidence, num_rewards, site_idx, global_time, continue_flag, window_data)
+        def cond_fn(state):
+            evidence, num_rewards, site_idx, global_time, continue_flag, window_data = state
+            return (evidence < self.threshold) & (site_idx < self.max_sites_per_window) & continue_flag
+        
+        def body_fn(state):
+            evidence, num_rewards, site_idx, global_time, continue_flag, window_data = state
             
-            # Sample interval
-            key_interval, key_reward = random.split(key_t)
-            dt = self.sample_inter_site_interval(key_interval)
-            time_in_patch = time_in_patch + dt
+            # Get pre-generated random values for this site
+            dt = intervals[site_idx]
+            noise = noise_samples[site_idx]
+            reward_sample = reward_samples[site_idx]
             
-            # Accumulate evidence (no noise for now, can add later)
+            # Update time and evidence
+            global_time = global_time + dt
             evidence = evidence + drift_rate * dt
+            evidence = jnp.where(
+                noise_std > 0,
+                evidence + noise_std * noise * jnp.sqrt(dt),
+                evidence
+            )
             
-            # Check if should leave
+            # Check if we should leave
             should_leave = evidence >= self.threshold
             
-            # If not leaving, stop and check reward
-            reward_prob = reward_probability_jax(num_rewards, self.initial_prob, self.decay_rate)
-            reward = random.uniform(key_reward) < reward_prob
+            # If not leaving, check for reward
+            reward_prob = reward_probability(num_rewards, self.initial_prob, self.decay_rate)
+            reward = jnp.where(should_leave, 0, (reward_sample < reward_prob).astype(jnp.float32))
+            stopped = jnp.where(should_leave, 0, 1)
             
+            # Store data
+            window_data = window_data.at[site_idx].set(jnp.array([global_time, reward, stopped]))
+
             # Update evidence based on outcome
-            # Only update if not leaving
-            evidence_update = jnp.where(
+            evidence = jnp.where(
                 should_leave,
-                0.0,  # No update if leaving
-                jnp.where(reward, -reward_bump, failure_bump)
+                self.start_point,  # reset evidence if leaving
+                evidence + jnp.where(reward > 0, -reward_bump, failure_bump)
             )
-            evidence = evidence + evidence_update
             
-            # Update counters (only if not leaving)
-            num_rewards = jnp.where(should_leave, num_rewards, num_rewards + reward.astype(jnp.float32))
+            # Update state
+            num_rewards = jnp.where(should_leave, 0, num_rewards + reward)
+            continue_flag = site_idx + 1 < self.max_sites_per_window
             
-            # Mark if left on this step
-            left = left | should_leave
-            
-            return (evidence, num_rewards, time_in_patch, left), (time_in_patch, reward, should_leave, left)
+            return (evidence, num_rewards, site_idx + 1, global_time, continue_flag, window_data)
         
         # Initial state
-        init_carry = (self.start_point, 0.0, 0.0, False)
-        
-        # Generate keys for all possible steps
-        keys = random.split(key, self.max_sites_per_patch)
+        init_state = (
+            jnp.array(self.start_point),  # evidence
+            jnp.array(0.0),                # num_rewards
+            jnp.array(0),                  # site_idx
+            jnp.array(0.0),                # global_time
+            jnp.array(True),               # continue_flag
+            window_data                     # window_data array
+        )
         
         # Run simulation
-        final_carry, outputs = jax.lax.scan(step_fn, init_carry, keys)
+        final_state = jax.lax.while_loop(cond_fn, body_fn, init_state)
+        _, num_rewards, num_sites, total_time, _, window_data = final_state
         
-        times, rewards, leaves, left_flags = outputs
+        # Calculate summary stats
+        num_stops = num_sites  # All sites are stops except the last (leave)
+        summary_stats = jnp.array([total_time, num_stops, num_rewards])
         
-        # Find where animal left (first True in left_flags)
-        # All steps after leaving are invalid
-        cumsum_left = jnp.cumsum(left_flags.astype(jnp.int32))
-        valid_mask = cumsum_left == 0  # Steps before leaving
-        
-        # Count valid stops (not including the leave site)
-        num_stops = jnp.sum(valid_mask & ~leaves)
-        
-        # Sum rewards only from valid, non-leave sites
-        num_rewards_total = jnp.sum(rewards * valid_mask)
-        
-        # Time when left (first time left_flags is True)
-        left_indices = jnp.where(left_flags, jnp.arange(self.max_sites_per_patch), self.max_sites_per_patch)
-        leave_idx = jnp.min(left_indices)
-        total_time = jnp.where(leave_idx < self.max_sites_per_patch, times[leave_idx], times[-1])
-        
-        summary_stats = jnp.array([total_time, num_stops, num_rewards_total])
-        actual_length = leave_idx + 1  # Include the leave site
-        
-        return summary_stats, actual_length
+        return window_data, num_sites, summary_stats
     
-    def _simulate_trial_static(self, key, theta, window_sites, max_patches=[]):
+    def simulate_one_window(self, theta, rng_key):
         """
-        Simulate trial until we have at least window_sites.
-        Uses constant theta for all patches (for data generation).
+        Simulate one window (user-facing API).
         
         Args:
-            key: JAX random key
-            theta: [drift_rate, reward_bump, failure_bump]
-            window_sites: Target number of sites
-            max_patches: Maximum number of patches to simulate (should be the same as window sites if always leave)
-
+            theta: (4,) array or list [drift_rate, reward_bump, failure_bump, noise_std]
+            rng_key: JAX random key
+            
         Returns:
-            summary_stats: Single-patch stats (3,) OR aggregate stats (8,)
+            window_data: (num_sites, 3) array [time_in_patch, reward, stopped]
+            summary_stats: (3,) array [total_time, num_stops, num_rewards]
         """
-        # Generate keys for all patches
-        max_patches = window_sites
-        keys = random.split(key, max_patches)
+        theta = jnp.array(theta)
+        window_data, num_sites, summary_stats = self._simulate_one_window_jit(theta, rng_key)
         
-        # Simulate all patches (vectorized)
-        stats_all, lengths_all = vmap(self._simulate_one_patch_static, in_axes=(0, None))(keys, theta)
+        # # Truncate to actual number of sites
+        # window_data = window_data[:num_sites]
         
-        # Compute cumulative sites
-        cumsum_lengths = jnp.cumsum(lengths_all)
-        
-        # Find first patch where we exceed window_sites
-        enough_sites = cumsum_lengths >= window_sites
-        first_enough = jnp.argmax(enough_sites)  # First True index
-        num_patches_needed = first_enough + 1
-        
-        # Get stats for patches we actually used
-        stats_used = stats_all[:num_patches_needed]
-        
-        # Compute aggregate statistics
-        mean_stats = jnp.mean(stats_used, axis=0)
-        std_stats = jnp.std(stats_used, axis=0)
-        
-        # Handle single patch case (std would be 0)
-        aggregate_stats = jnp.array([
-            mean_stats[0],  # mean total_time
-            std_stats[0],   # std total_time
-            mean_stats[1],  # mean num_stops
-            std_stats[1],   # std num_stops
-            mean_stats[2],  # mean num_rewards
-            std_stats[2],   # std num_rewards
-            jnp.sum(stats_used[:, 2]),  # total rewards
-            num_patches_needed.astype(jnp.float32),  # num_patches
-        ])
-        
-        return aggregate_stats
+        return window_data, summary_stats
     
-    def simulate_batch(self, key, theta_batch, window_sites=100, mode='multi'):
+    def simulate_batch(self, theta_batch, rng_key, return_aggregate=True):
         """
-        Simulate a batch of trials in parallel (main interface for data generation).
+        Simulate multiple windows in parallel using vmap.
         
         Args:
-            key: JAX random key
-            theta_batch: (N, 3) array of parameters
-            window_sites: Number of sites per trial
-            mode: 'single' or 'multi' (aggregate)
-        
+            theta_batch: (batch_size, 4) array of parameters
+            rng_key: JAX random key
+            return_aggregate: If True, return aggregate statistics across batch
+            
         Returns:
-            stats_batch: (N, 3) for single or (N, 8) for multi
+            If return_aggregate=False:
+                window_data_batch: (batch_size, max_sites, 3) array
+                summary_stats_batch: (batch_size, 3) array
+            If return_aggregate=True:
+                aggregate_stats: (8,) array [mean_time, std_time, mean_stops, 
+                                            std_stops, mean_rewards, std_rewards]
         """
+        theta_batch = jnp.array(theta_batch)
         batch_size = theta_batch.shape[0]
-        keys = random.split(key, batch_size)
         
-        if mode == 'single':
-            # Just simulate one patch per theta
-            stats_batch, _ = vmap(self._simulate_one_patch_static)(keys, theta_batch)
+        # Generate batch of random keys
+        rng_keys = random.split(rng_key, batch_size)
+        
+        # Vectorize over batch
+        simulate_fn = vmap(self._simulate_one_window_jit)
+        window_data_batch, num_sites_batch, summary_stats_batch = simulate_fn(theta_batch, rng_keys)
+        
+        if return_aggregate:
+            # Compute aggregate statistics
+            times = summary_stats_batch[:, 0]
+            stops = summary_stats_batch[:, 1]
+            rewards = summary_stats_batch[:, 2]
+            
+            aggregate_stats = jnp.array([
+                jnp.mean(times),
+                jnp.std(times),
+                jnp.mean(stops),
+                jnp.std(stops),
+                jnp.mean(rewards),
+                jnp.std(rewards)
+            ])
+            
+            return aggregate_stats
         else:
-            # Simulate full trial with multiple patches
-            stats_batch = vmap(partial(self._simulate_trial_static, window_sites=window_sites))(
-                keys, theta_batch
-            )
-        
-        return stats_batch
+            return window_data_batch, num_sites_batch, summary_stats_batch
     
-    def to_torch(self, jax_array):
-        """Convert JAX array to PyTorch tensor"""
-        return torch.from_numpy(np.array(jax_array)).float()
-    
-    def generate_training_data(self, key, prior_low, prior_high, num_simulations, 
-                              window_sites=100, mode='multi'):
+    def generate_training_data(self, prior_low, prior_high, num_samples, rng_key, 
+                               mode='multi', return_torch=True):
         """
-        Generate training data for SNLE (drop-in replacement for PyTorch version).
+        Generate training data for SNLE.
         
         Args:
-            key: JAX random key
-            prior_low: (3,) lower bounds for parameters
-            prior_high: (3,) upper bounds for parameters
-            num_simulations: Number of simulations to generate
-            window_sites: Sites per simulation
-            mode: 'single' or 'multi'
-        
+            prior_low: (4,) lower bounds for uniform prior
+            prior_high: (4,) upper bounds for uniform prior
+            num_samples: number of training samples
+            rng_key: JAX random key
+            mode: 'single' for single-patch stats or 'multi' for aggregate stats *** SINGLE NOT IMPLEMENTED with jax batches (end and diff times) ***
+            return_torch: if True, return PyTorch tensors (for SBI compatibility)
+            
         Returns:
-            theta_samples: (N, 3) PyTorch tensor
-            x_samples: (N, 3 or 8) PyTorch tensor (normalized)
-            x_mean: Mean for denormalization
-            x_std: Std for denormalization
+            theta_samples: (num_samples, 4) parameters
+            x_samples: (num_samples, 3) or (num_samples, 8) summary statistics
         """
-        print(f"Generating {num_simulations} simulations with JAX (mode={mode})...")
+        prior_low = jnp.array(prior_low)
+        prior_high = jnp.array(prior_high)
         
         # Sample parameters from prior
-        key_theta, key_sim = random.split(key)
-        theta_batch = random.uniform(
-            key_theta, 
-            (num_simulations, 3), 
-            minval=prior_low, 
+        key_params, key_sim = random.split(rng_key)
+        theta_samples = random.uniform(
+            key_params, 
+            shape=(num_samples, 4),
+            minval=prior_low,
             maxval=prior_high
         )
         
-        # Simulate in parallel
-        stats_batch = self.simulate_batch(key_sim, theta_batch, window_sites=window_sites, mode=mode)
+        # Simulate in batches (for memory efficiency)
+        batch_size = min(1000, num_samples)  # Adjust based on GPU memory
+        num_batches = (num_samples + batch_size - 1) // batch_size
         
-        # Convert to PyTorch
-        theta_samples = self.to_torch(theta_batch)
-        x_samples = self.to_torch(stats_batch)
+        x_samples_list = []
         
-        # Check for NaN
-        num_nan = torch.isnan(x_samples).any(dim=1).sum()
-        if num_nan > 0:
-            print(f"⚠️  WARNING: {num_nan}/{num_simulations} samples have NaN!")
-            # Remove NaN samples
-            valid_mask = ~torch.isnan(x_samples).any(dim=1)
-            theta_samples = theta_samples[valid_mask]
-            x_samples = x_samples[valid_mask]
-            print(f"   Kept {len(theta_samples)} valid samples")
+        for i in range(num_batches):
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, num_samples)
+            theta_batch = theta_samples[start_idx:end_idx]
+            
+            key_sim, subkey = random.split(key_sim)
+            
+            if mode == 'multi':
+                _, _, summary_stats = self.simulate_batch(theta_batch, subkey, return_aggregate=False)
+                x_samples_list.append(summary_stats)
+            else:  # single
+                # For single mode, we need single patch per sample wich would have different lengths
+                # This is more complex - implement if needed but will be slower without batching
+                raise NotImplementedError("single-patch mode not yet implemented in JAX")
         
-        # Normalize
-        x_mean = x_samples.mean(dim=0, keepdim=True)
-        x_std = x_samples.std(dim=0, keepdim=True)
-        x_samples_normalized = (x_samples - x_mean) / (x_std + 1e-8)
+        x_samples = jnp.concatenate(x_samples_list, axis=0)
         
-        print(f"Training data shape: theta={theta_samples.shape}, x={x_samples.shape}")
-        if mode == 'single':
-            print(f"Single-patch stats (3 features): total_time, num_stops, num_rewards")
-        else:
-            print(f"Multi-patch aggregate stats (8 features): mean_time, std_time, mean_stops, std_stops, mean_rewards, std_rewards, total_rewards, num_patches")
+        if return_torch:
+            import torch
+            theta_samples = torch.from_numpy(np.array(theta_samples)).float()
+            x_samples = torch.from_numpy(np.array(x_samples)).float()
         
-        return theta_samples, x_samples_normalized, x_mean, x_std
+        return theta_samples, x_samples
 
-
-# ===== Utility functions =====
 
 def create_prior_jax():
     """
-    Get prior bounds for JAX simulator.
+    Return prior bounds for JAX simulator.
     
     Returns:
-        prior_low, prior_high as JAX arrays
+        low: (4,) array of lower bounds
+        high: (4,) array of upper bounds
     """
-    prior_low = jnp.array([0.01, 0.01, 0.0])
-    prior_high = jnp.array([1.5, 1.5, 1.5])
-    return prior_low, prior_high
+    low = jnp.array([0.01, 0.01, 0.0, 0.0])
+    high = jnp.array([1.5, 1.5, 1.5, 0.1])
+    return low, high
 
 
 # ===== Tests =====
 
 if __name__ == "__main__":
-    print("="*80)
+    print("="*60)
     print("Testing JAX Simulator")
-    print("="*80)
+    print("="*60)
     
-    # Initialize
-    simulator = PatchForagingDDMJax()
-    key = random.PRNGKey(0)
+    simulator = PatchForagingDDM_JAX()
+    rng_key = random.PRNGKey(0)
     
-    # Test 1: Single patch simulation
-    print("\n1. Single patch simulation")
-    key, subkey = random.split(key)
-    theta = jnp.array([0.5, 0.6, 0.2])
-    stats, length = simulator._simulate_one_patch_static(subkey, theta)
-    print(f"   Stats: {stats}")
-    print(f"   Length: {length}")
+    # Test 1: Single window simulation
+    print("\n1. Single window simulation")
+    theta = jnp.array([0.5, 0.6, 0.2, 0.05])
+    rng_key, subkey = random.split(rng_key)
+    window_data, summary_stats = simulator.simulate_one_window(theta, subkey)
+    print(f"   Window data shape: {window_data.shape}")
+    print(f"   Summary stats: {summary_stats}")
+    print(f"   Total time: {summary_stats[0]:.2f}")
+    print(f"   Num stops: {int(summary_stats[1])}")
+    print(f"   Num rewards: {int(summary_stats[2])}")
+
+    # NEW: Check if last site is a leave
+    num_sites = int(summary_stats[1])  # num_stops = num_sites
+    print(f"\n   Checking last 5 sites:")
+    for i in range(max(0, num_sites-5), min(num_sites, window_data.shape[0])):
+        time_val, reward, stopped = window_data[i]
+        site_type = "STOP" if stopped == 1 else "LEAVE"
+        print(f"   Site {i}: time={time_val:.2f}, reward={reward:.0f}, type={site_type}")
     
-    # Test 2: Trial simulation (multiple patches)
-    print("\n2. Trial simulation (multiple patches)")
-    key, subkey = random.split(key)
-    stats = simulator._simulate_trial_static(subkey, theta, window_sites=100)
-    print(f"   Aggregate stats: {stats}")
-    print(f"   Shape: {stats.shape}")
+    # Test 2: Batch simulation
+    print("\n2. Batch simulation (10 windows)")
+    theta_batch = jnp.tile(theta, (10, 1))  # Same theta for all
+    rng_key, subkey = random.split(rng_key)
+    window_data_batch, num_sites_batch, summary_stats_batch = simulator.simulate_batch(
+        theta_batch, subkey, return_aggregate=False
+    )
+    print(f"   Batch shape: {window_data_batch.shape}")
+    print(f"   Summary stats shape: {summary_stats_batch.shape}")
+    print(f"   Mean time: {jnp.mean(summary_stats_batch[:, 0]):.2f}")
+    print(f"   Mean rewards: {jnp.mean(summary_stats_batch[:, 2]):.2f}")
     
-    # Test 3: Batch simulation (vectorized)
-    print("\n3. Batch simulation")
-    key, subkey = random.split(key)
-    theta_batch = random.uniform(subkey, (100, 3), 
-                                 minval=jnp.array([0.01, 0.01, 0.0]),
-                                 maxval=jnp.array([1.5, 1.5, 1.5]))
+    # Test 3: Aggregate statistics
+    print("\n3. Aggregate statistics")
+    rng_key, subkey = random.split(rng_key)
+    aggregate_stats = simulator.simulate_batch(theta_batch, subkey, return_aggregate=True)
+    print(f"   Aggregate stats: {aggregate_stats}")
+    
+    # Test 4: Training data generation
+    print("\n4. Training data generation (1000 samples)")
+    prior_low, prior_high = create_prior_jax()
+    rng_key, subkey = random.split(rng_key)
     
     import time
-    start = time.time()
-    stats_batch = simulator.simulate_batch(subkey, theta_batch, window_sites=100, mode='multi')
-    elapsed = time.time() - start
-    
-    print(f"   Generated {len(theta_batch)} trials in {elapsed:.3f}s")
-    print(f"   Rate: {len(theta_batch)/elapsed:.1f} trials/sec")
-    print(f"   Stats shape: {stats_batch.shape}")
-    print(f"   First sample: {stats_batch[0]}")
-    
-    # Test 4: Generate training data (full pipeline)
-    print("\n4. Generate training data")
-    key, subkey = random.split(key)
-    prior_low, prior_high = create_prior_jax()
-    
-    theta_samples, x_samples, x_mean, x_std = simulator.generate_training_data(
-        subkey, prior_low, prior_high, 
-        num_simulations=1000,
-        window_sites=100,
-        mode='multi'
+    start_time = time.time()
+    theta_samples, x_samples = simulator.generate_training_data(
+        prior_low, prior_high, 1000, subkey, mode='multi', return_torch=True
     )
+    elapsed = time.time() - start_time
+    
     print(f"   Theta shape: {theta_samples.shape}")
     print(f"   X shape: {x_samples.shape}")
-    print(f"   X mean: {x_mean.squeeze()}")
-    print(f"   X std: {x_std.squeeze()}")
+    print(f"   Time elapsed: {elapsed:.2f}s")
+    print(f"   Samples/second: {1000/elapsed:.1f}")
+    print(f"   Type: {type(theta_samples)}")
     
-    # Test 5: Benchmark vs sequential
-    print("\n5. Speed benchmark")
-    num_sims = 10000
+    # Test 5: Speed benchmark
+    print("\n5. Speed benchmark (10,000 samples)")
+    rng_key, subkey = random.split(rng_key)
     
-    print(f"   Generating {num_sims} simulations...")
-    key, subkey = random.split(key)
-    start = time.time()
-    stats_batch = simulator.simulate_batch(subkey, 
-                                           random.uniform(subkey, (num_sims, 3),
-                                                         minval=prior_low,
-                                                         maxval=prior_high),
-                                           window_sites=100, mode='multi')
-    elapsed = time.time() - start
-    print(f"   JAX (parallel): {elapsed:.3f}s ({num_sims/elapsed:.1f} trials/sec)")
+    start_time = time.time()
+    theta_samples, x_samples = simulator.generate_training_data(
+        prior_low, prior_high, 10000, subkey, mode='multi', return_torch=True
+    )
+    elapsed = time.time() - start_time
     
-    print("\n" + "="*80)
-    print("✓ All JAX tests passed!")
-    print("="*80)
+    print(f"   Time elapsed: {elapsed:.2f}s")
+    print(f"   Samples/second: {10000/elapsed:.1f}")
     
-    print("\n" + "="*80)
-    print("Example Usage for SNLE Training")
-    print("="*80)
-    print("""
-from simulator_jax import PatchForagingDDMJax, create_prior_jax
-import jax.random as random
-
-# Initialize
-simulator = PatchForagingDDMJax()
-key = random.PRNGKey(42)
-prior_low, prior_high = create_prior_jax()
-
-# Generate training data
-theta_samples, x_samples, x_mean, x_std = simulator.generate_training_data(
-    key, prior_low, prior_high,
-    num_simulations=200000,
-    window_sites=100,
-    mode='multi'
-)
-
-# x_samples is already normalized and ready for SNLE training!
-    """)
+    
+    print("\n" + "="*60)
+    print("All tests passed!")
+    print("="*60)

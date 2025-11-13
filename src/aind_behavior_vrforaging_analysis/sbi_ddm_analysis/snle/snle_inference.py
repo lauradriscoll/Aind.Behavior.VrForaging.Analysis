@@ -11,57 +11,91 @@ from sbi.inference import SNLE
 from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_utils import save_snle_model, load_snle_model
 
 def generate_likelihood_training_data(simulator, prior, num_simulations=10000, 
-                                     window_sites=100, mode='single'):
+                                     window_sites=100, mode='single', use_jax=False, 
+                                     rng_key=None):
     """
     Generate training data for SNLE.
     
     Args:
-        simulator: PatchForagingDDM instance
-        prior: Prior distribution over parameters
+        simulator: PatchForagingDDM or PatchForagingDDM_JAX instance
+        prior: Prior distribution over parameters (PyTorch BoxUniform)
         num_simulations: Number of training samples
-        window_sites: Number of sites to simulate
+        window_sites: Number of sites to simulate (only used for PyTorch simulator)
         mode: 'single' for single-patch stats (3 features) 
               'multi' for multi-patch aggregate stats (8 features)
+        use_jax: If True, use JAX simulator's fast batch generation
+        rng_key: JAX random key (required if use_jax=True)
     
     Returns:
-        theta_samples: (N, 3) parameters
-        x_samples: (N, 3 or 8) summary statistics (normalized)
+        theta_samples: (N, 4) PyTorch tensor [drift_rate, reward_bump, failure_bump, noise_std]
+        x_samples: (N, 3 or 8) PyTorch tensor of summary statistics (normalized)
         x_mean: Mean for denormalization
         x_std: Std for denormalization
     """
-    print(f"Generating {num_simulations} training samples (mode={mode})...")
+    print(f"Generating {num_simulations} training samples (mode={mode}, use_jax={use_jax})...")
     
-    theta_samples = []
-    x_samples = []
-    
-    return_aggregate = (mode == 'multi')
-    
-    for i in tqdm(range(num_simulations)):
-        # Sample parameters
-        theta = prior.sample()
+    if use_jax:
+        # Fast JAX-based generation
+        if rng_key is None:
+            import jax
+            from jax import random
+            rng_key = random.PRNGKey(0)
         
-        # Create constant parameter generator
-        param_gen = simulator.walk_params(theta)
+        import jax.numpy as jnp
         
-        # Simulate trial and get stats
-        _, summary_stats = simulator.simulate_trial(
-            param_gen, 
-            window_sites, 
-            return_aggregate=return_aggregate
+        # Get prior bounds (convert PyTorch prior to JAX bounds)
+        prior_low = prior.base_dist.low.numpy()
+        prior_high = prior.base_dist.high.numpy()
+        
+        # Generate training data using JAX simulator
+        theta_samples_jax, x_samples_jax = simulator.generate_training_data(
+            prior_low, prior_high, num_simulations, rng_key, 
+            mode=mode, return_torch=True
         )
         
-        # Debug: Check for NaN on first iteration
-        if i == 0:
-            print(f"\nFirst sample check:")
-            print(f"  theta: {theta}")
-            print(f"  summary_stats: {summary_stats}")
-            print(f"  has NaN: {torch.isnan(summary_stats).any()}")
+        # Already returns PyTorch tensors
+        theta_samples = theta_samples_jax
+        x_samples = x_samples_jax
         
-        theta_samples.append(theta)
-        x_samples.append(summary_stats)
-    
-    theta_samples = torch.stack(theta_samples)
-    x_samples = torch.stack(x_samples)
+        # Debug: Check first sample
+        print(f"\nFirst sample check:")
+        print(f"  theta: {theta_samples[0]}")
+        print(f"  summary_stats: {x_samples[0]}")
+        print(f"  has NaN: {torch.isnan(x_samples[0]).any()}")
+        
+    else:
+        # Original PyTorch-based generation (slower)
+        theta_samples = []
+        x_samples = []
+        
+        return_aggregate = (mode == 'multi')
+        
+        for i in tqdm(range(num_simulations)):
+            # Sample parameters
+            theta = prior.sample()
+            
+            # Create constant parameter generator
+            param_gen = simulator.evolve_params(mode='walk', theta_init=theta, sigma=0.0)
+            
+            # Simulate trial and get stats
+            _, summary_stats, _ = simulator.simulate_trial(
+                param_gen, 
+                window_sites, 
+                return_aggregate=return_aggregate
+            )
+            
+            # Debug: Check for NaN on first iteration
+            if i == 0:
+                print(f"\nFirst sample check:")
+                print(f"  theta: {theta}")
+                print(f"  summary_stats: {summary_stats}")
+                print(f"  has NaN: {torch.isnan(summary_stats).any()}")
+            
+            theta_samples.append(theta)
+            x_samples.append(summary_stats)
+        
+        theta_samples = torch.stack(theta_samples)
+        x_samples = torch.stack(x_samples)
     
     # Check for NaN before normalization
     num_nan = torch.isnan(x_samples).any(dim=1).sum()
@@ -90,19 +124,22 @@ def generate_likelihood_training_data(simulator, prior, num_simulations=10000,
 
 
 def train_snle(simulator, prior, num_simulations=10000, window_sites=100, 
-               mode='single', max_num_epochs=50, batch_size=50):
+               mode='single', max_num_epochs=50, batch_size=50, 
+               use_jax=False, rng_key=None):
     """
     Train SNLE to learn p(summary_stats | theta).
     
     Args:
-        simulator: PatchForagingDDM instance
+        simulator: PatchForagingDDM or PatchForagingDDM_JAX instance
         prior: Prior distribution over parameters
         num_simulations: Number of training samples
-        window_sites: Number of sites to simulate
+        window_sites: Number of sites to simulate (only used for PyTorch simulator)
         mode: 'single' for single-patch inference
               'multi' for multi-patch inference
         max_num_epochs: Maximum training epochs
         batch_size: Training batch size
+        use_jax: If True, use JAX simulator for fast data generation
+        rng_key: JAX random key (required if use_jax=True)
     
     Returns:
         likelihood_estimator: Trained SNLE
@@ -113,7 +150,8 @@ def train_snle(simulator, prior, num_simulations=10000, window_sites=100,
     """
     # Generate training data
     theta_samples, x_samples, x_mean, x_std = generate_likelihood_training_data(
-        simulator, prior, num_simulations, window_sites, mode=mode
+        simulator, prior, num_simulations, window_sites, mode=mode,
+        use_jax=use_jax, rng_key=rng_key
     )
     
     # Initialize SNLE
@@ -175,7 +213,7 @@ def infer_parameters_snle(inference, observed_stats,
         mcmc_method: MCMC sampling method
     
     Returns:
-        posterior_samples: (num_samples, 3) parameter samples
+        posterior_samples: (num_samples, 4) parameter samples
     """
     print("Running MCMC to infer parameters...")
     
@@ -210,7 +248,7 @@ if __name__ == "__main__":
     from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM, create_prior
     
     # Setup
-    simulator = PatchForagingDDM(noise_std=0.0)
+    simulator = PatchForagingDDM()
     prior = create_prior()
     
     # Test training (small dataset)
@@ -230,9 +268,9 @@ if __name__ == "__main__":
     
     # Test inference
     print("\n3. Testing inference...")
-    true_theta = torch.tensor([0.6, 0.8, 0.3])
-    param_gen = simulator.walk_params(true_theta)
-    _, observed_stats = simulator.simulate_trial(param_gen, 100, return_aggregate=False)
+    true_theta = torch.tensor([0.6, 0.8, 0.3, 0.05])
+    param_gen = simulator.evolve_params(mode='walk', theta_init=true_theta, sigma=0.0)
+    _, observed_stats, _ = simulator.simulate_trial(param_gen, 100, return_aggregate=False)
     
     samples = infer_parameters_snle(
         inference_single, observed_stats,
