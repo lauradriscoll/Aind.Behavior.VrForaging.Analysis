@@ -18,6 +18,7 @@ import jax
 import jax.numpy as jnp
 from jax import random, jit, vmap
 import numpy as np
+import torch
 
 
 def reward_probability(num_rewards, initial_prob=0.8, decay_rate=-0.1):
@@ -297,6 +298,23 @@ def create_prior_jax():
     low = jnp.array([0.01, 0.01, 0.0, 0.0])
     high = jnp.array([1.5, 1.5, 1.5, 0.1])
     return low, high
+
+def create_prior_torch():
+    """
+    Prior distribution for DDM parameters
+    
+    Returns:
+        BoxUniform prior over [drift_rate, reward_bump, failure_bump]
+    """
+    from sbi.utils.torchutils import BoxUniform
+
+    low = torch.tensor([0.01, 0.01, 0.0, 0.0])
+    high = torch.tensor([1.5, 1.5, 1.5, 0.1])
+    
+    return BoxUniform(
+        low=low,
+        high=high, 
+    ), low, high
 
 
 # ===== Tests =====

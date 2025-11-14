@@ -252,11 +252,14 @@ def create_prior():
         BoxUniform prior over [drift_rate, reward_bump, failure_bump]
     """
     from sbi.utils.torchutils import BoxUniform
+
+    low = torch.tensor([0.01, 0.01, 0.0, 0.0])
+    high = torch.tensor([1.5, 1.5, 1.5, 0.1])
     
     return BoxUniform(
-        low=torch.tensor([0.01, 0.01, 0.0, 0.0]),
-        high=torch.tensor([1.5, 1.5, 1.5, 0.1])
-    )
+        low=low,
+        high=high, 
+    ), low, high
 
 # ===== Tests =====
 
