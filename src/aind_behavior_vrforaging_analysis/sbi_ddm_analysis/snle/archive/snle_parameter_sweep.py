@@ -26,21 +26,20 @@ import pickle
 from jax import random
 
 # Import SNLE modules
-from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM, create_prior
-from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator_jax import PatchForagingDDM_JAX
-from snle_inference import train_snle, infer_parameters_snle
+from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM_JAX, create_prior
+from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.archive.snle_inference import train_snle, infer_parameters_snle
 from snle_utils import plot_training_history
 
 # Parameter grid
-NUM_SIMULATIONS = [100000, 500000, 1000000]  # Use large numbers with JAX!
+NUM_SIMULATIONS = [100000, 500000, 1000000, 2000000]
 WINDOW_SITES = [25, 50, 75, 100]
 
 # Test cases (4D theta: drift_rate, reward_bump, failure_bump, noise_std)
 TEST_CASES = [
-    ("low_drift_high_bump", torch.tensor([0.2, 0.8, 0.3, 0.05])),
-    ("high_drift_low_bump", torch.tensor([0.8, 0.2, 0.3, 0.05])),
-    ("balanced", torch.tensor([0.5, 0.5, 0.3, 0.05])),
-    ("high_noise", torch.tensor([0.5, 0.5, 0.3, 0.1])),
+    ("low_drift_high_bump", torch.tensor([0.2, 0.8, 0.3, 0.01])),
+    ("high_drift_low_bump", torch.tensor([0.8, 0.2, 0.3, 0.01])),
+    ("balanced", torch.tensor([0.5, 0.5, 0.5, 0.01])),
+    ("high_noise", torch.tensor([0.5, 0.5, 0.3, 0.05])),
 ]
 
 
@@ -119,18 +118,18 @@ def compute_generative_metrics(simulator, true_theta, posterior_samples, logger,
     # Generate from true parameters (batch)
     rng_key, subkey = random.split(rng_key)
     true_theta_batch = jnp.tile(jnp.array(true_theta.numpy()), (num_patches, 1))
-    _, _, true_stats = simulator_jax.simulate_batch(true_theta_batch, subkey, return_aggregate=False)
+    _, true_stats = simulator_jax.simulate_batch(true_theta_batch, subkey)
     true_data = np.array(true_stats)
     
     # Generate from posterior samples (batch)
     rng_key, subkey = random.split(rng_key)
     posterior_theta_batch = jnp.array(posterior_samples[:num_patches].numpy())
-    _, _, posterior_stats = simulator_jax.simulate_batch(posterior_theta_batch, subkey, return_aggregate=False)
+    _, posterior_stats = simulator_jax.simulate_batch(posterior_theta_batch, subkey)
     posterior_data = np.array(posterior_stats)
     
     # Compute Wasserstein distance and KL divergence for each feature
-    # Features: [total_time, num_stops, num_rewards]
-    feature_names = ['total_time', 'num_stops', 'num_rewards']
+    # Features: [time, num_stops, num_rewards]
+    feature_names = ['time', 'num_stops', 'num_rewards']
     wasserstein_distances = []
     kl_divergences = []
     

@@ -13,14 +13,13 @@ Updates:
 import os
 os.environ['JAX_PLATFORMS'] = 'cpu'
 
-import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 from jax import random
 import jax.numpy as jnp
 
-from simulator_jax import PatchForagingDDM_JAX
+from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM_JAX
 
 
 def plot_single_window(ax, window, theta, title=None):
@@ -34,10 +33,12 @@ def plot_single_window(ax, window, theta, title=None):
         title: optional title
     """
     # Convert to numpy if needed
-    if torch.is_tensor(window):
-        window = window.numpy()
-    if torch.is_tensor(theta):
-        theta = theta.numpy()
+    if not isinstance(window, np.ndarray):
+        window = np.asarray(window)
+
+    if not isinstance(theta, np.ndarray):
+        theta = np.asarray(theta)
+
     
     times = window[:, 0]
     rewards = window[:, 1]
@@ -141,7 +142,7 @@ def plot_parameter_grid_2d(
     for i, p1_val in enumerate(param1_values):
         for j, p2_val in enumerate(param2_values):
             # Construct theta (4D)
-            theta = torch.zeros(4)
+            theta = np.zeros(4)
             
             # Set varied parameters
             theta[idx1] = p1_val
@@ -155,10 +156,7 @@ def plot_parameter_grid_2d(
             rng_key, subkey = random.split(rng_key)
 
             # Convert theta to JAX array
-            if torch.is_tensor(theta):
-                theta_jax = jnp.array(theta.numpy())
-            else:
-                theta_jax = jnp.array(theta)
+            theta_jax = jnp.array(theta)
             
             # Simulate window
             window, _ = simulator.simulate_one_window(theta_jax, subkey)
@@ -218,8 +216,8 @@ def plot_all_parameter_combinations(
     plot_parameter_grid_2d(
         param1_name='drift_rate',
         param2_name='reward_bump',
-        param1_range=(0.1, 1.5),
-        param2_range=(0.1, 1.5),
+        param1_range=(0., 1.),
+        param2_range=(0., 1.),
         fixed_params={'failure_bump': 0.3, 'noise_std': 0.05},
         grid_size=grid_size,
         window_sites=window_sites,
@@ -231,8 +229,8 @@ def plot_all_parameter_combinations(
     plot_parameter_grid_2d(
         param1_name='drift_rate',
         param2_name='failure_bump',
-        param1_range=(0.1, 1.5),
-        param2_range=(0.0, 1.5),
+        param1_range=(0., 1.),
+        param2_range=(0., 1.),
         fixed_params={'reward_bump': 0.6, 'noise_std': 0.05},
         grid_size=grid_size,
         window_sites=window_sites,
@@ -244,8 +242,8 @@ def plot_all_parameter_combinations(
     plot_parameter_grid_2d(
         param1_name='drift_rate',
         param2_name='noise_std',
-        param1_range=(0.1, 1.5),
-        param2_range=(0.0, 0.1),
+        param1_range=(0., 1.),
+        param2_range=(0., 0.5),
         fixed_params={'reward_bump': 0.6, 'failure_bump': 0.3},
         grid_size=grid_size,
         window_sites=window_sites,
@@ -257,8 +255,8 @@ def plot_all_parameter_combinations(
     plot_parameter_grid_2d(
         param1_name='reward_bump',
         param2_name='failure_bump',
-        param1_range=(0.1, 1.5),
-        param2_range=(0.0, 1.5),
+        param1_range=(0., 1.),
+        param2_range=(0., 1.),
         fixed_params={'drift_rate': 0.5, 'noise_std': 0.05},
         grid_size=grid_size,
         window_sites=window_sites,
@@ -270,8 +268,8 @@ def plot_all_parameter_combinations(
     plot_parameter_grid_2d(
         param1_name='reward_bump',
         param2_name='noise_std',
-        param1_range=(0.1, 1.5),
-        param2_range=(0.0, 0.1),
+        param1_range=(0., 1.),
+        param2_range=(0., 0.5),
         fixed_params={'drift_rate': 0.5, 'failure_bump': 0.3},
         grid_size=grid_size,
         window_sites=window_sites,
@@ -283,8 +281,8 @@ def plot_all_parameter_combinations(
     plot_parameter_grid_2d(
         param1_name='failure_bump',
         param2_name='noise_std',
-        param1_range=(0.0, 1.5),
-        param2_range=(0.0, 0.1),
+        param1_range=(0., 1.),
+        param2_range=(0., 0.5),
         fixed_params={'drift_rate': 0.5, 'reward_bump': 0.6},
         grid_size=grid_size,
         window_sites=window_sites,
@@ -313,7 +311,7 @@ def plot_parameter_effect_summary(
     
     param_names = ['drift_rate', 'reward_bump', 'failure_bump', 'noise_std']
     param_ranges = [(0.2, 1.5), (0.2, 1.5), (0.0, 1.2), (0.0, 0.1)]
-    base_theta = torch.tensor([0.5, 0.6, 0.3, 0.05])
+    base_theta = np.array([0.5, 0.6, 0.3, 0.05])
     
     print("\nGenerating parameter effect summary...")
     
@@ -322,17 +320,14 @@ def plot_parameter_effect_summary(
         
         for i, param_val in enumerate(param_values):
             # Create theta with one parameter varied
-            theta = base_theta.clone()
+            theta = base_theta.copy()
             theta[param_idx] = param_val
             
             # Split RNG key
             rng_key, subkey = random.split(rng_key)
 
             # Convert theta to JAX array
-            if torch.is_tensor(theta):
-                theta_jax = jnp.array(theta.numpy())
-            else:
-                theta_jax = jnp.array(theta)
+            theta_jax = jnp.array(theta)
             
             # Simulate
             window, _ = simulator.simulate_one_window(theta_jax, subkey)
@@ -366,23 +361,20 @@ def plot_noise_comparison(
     fig, axes = plt.subplots(2, 3, figsize=(15, 8))
     axes = axes.flatten()
     
-    base_theta = torch.tensor([0.5, 0.6, 0.3, 0.0])  # Start with no noise
+    base_theta = np.array([0.5, 0.6, 0.3, 0.0])  # Start with no noise
     noise_levels = [0.0, 0.02, 0.04, 0.06, 0.08, 0.1]
     
     print("\nGenerating noise comparison...")
     
     for i, noise_std in enumerate(noise_levels):
-        theta = base_theta.clone()
+        theta = base_theta.copy()
         theta[3] = noise_std
         
         # Split RNG key
         rng_key, subkey = random.split(rng_key)
 
         # Convert theta to JAX array
-        if torch.is_tensor(theta):
-            theta_jax = jnp.array(theta.numpy())
-        else:
-            theta_jax = jnp.array(theta)
+        theta_jax = jnp.array(theta)
 
         # Simulate
         window, _ = simulator.simulate_one_window(theta_jax, subkey)

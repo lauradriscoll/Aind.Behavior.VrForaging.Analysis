@@ -46,7 +46,7 @@ def experiment_sliding_window_pipeline(
         model_dir: Location of trained SNLE model
     """
     from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM, create_prior
-    from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_inference import train_snle
+    from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.archive.snle_inference import train_snle
     from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_utils import save_snle_model, load_snle_model
     from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_sliding_window import (
         simulate_full_dataset, analyze_dataset
@@ -264,7 +264,7 @@ def experiment_single_session_demo():
     Demonstrate sliding window on a single session with detailed plots.
     """
     from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM, create_prior
-    from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_inference import train_snle
+    from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.archive.snle_inference import train_snle
     from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_sliding_window import (
         simulate_session_with_evolution, sliding_window_inference, plot_parameter_evolution
     )

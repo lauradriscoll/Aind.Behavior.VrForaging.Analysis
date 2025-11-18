@@ -6,7 +6,7 @@ Purpose: Pre-defined workflows for common SNLE experiments.
 
 import torch
 from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM, create_prior
-from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_inference import train_snle, infer_parameters_snle, load_snle_model, save_snle_model
+from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.archive.snle_inference import train_snle, infer_parameters_snle, load_snle_model, save_snle_model
 from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_utils  import (plot_training_history, plot_posterior_pairplot, 
                         compare_snle_vs_simulator, print_inference_summary,
                         plot_posterior_distributions)

@@ -162,9 +162,9 @@ def infer_parameters_snle(inference, observed_stats,
 if __name__ == "__main__":
     import torch
     from jax import random
-    from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator_jax import PatchForagingDDM_JAX
+    from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM_JAX
     from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import create_prior
-    from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_inference import (
+    from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.archive.snle_inference import (
         train_snle,
         infer_parameters_snle,
         save_snle_model,

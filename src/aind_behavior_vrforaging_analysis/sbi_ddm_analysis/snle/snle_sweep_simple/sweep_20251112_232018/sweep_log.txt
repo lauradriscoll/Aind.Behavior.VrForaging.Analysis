@@ -1,9 +1,0 @@
-2025-11-12 23:20:18,544 - INFO - Training SNLE: 100000.0 sims, 50 sites
-2025-11-12 23:20:18,634 - ERROR - Failed for 100000.0, 50: 'tuple' object has no attribute 'base_dist'
-2025-11-12 23:20:18,635 - INFO - Training SNLE: 100000.0 sims, 100 sites
-2025-11-12 23:20:18,635 - ERROR - Failed for 100000.0, 100: 'tuple' object has no attribute 'base_dist'
-2025-11-12 23:20:18,635 - INFO - Training SNLE: 500000.0 sims, 50 sites
-2025-11-12 23:20:18,635 - ERROR - Failed for 500000.0, 50: 'tuple' object has no attribute 'base_dist'
-2025-11-12 23:20:18,635 - INFO - Training SNLE: 500000.0 sims, 100 sites
-2025-11-12 23:20:18,635 - ERROR - Failed for 500000.0, 100: 'tuple' object has no attribute 'base_dist'
-2025-11-12 23:20:18,635 - INFO - Sweep complete.

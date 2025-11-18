@@ -189,7 +189,7 @@ def sliding_window_inference(simulator, session_data: torch.Tensor,
             'posterior_means': (num_windows, 3) means
             'posterior_stds': (num_windows, 3) stds
     """
-    from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_inference import infer_parameters_snle
+    from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.archive.snle_inference import infer_parameters_snle
     
     num_sites = len(session_data)
     num_windows = (num_sites - window_size) // stride + 1
@@ -500,7 +500,7 @@ if __name__ == "__main__":
     print("Testing sliding window inference module...")
     
     from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM, create_prior
-    from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_inference import train_snle
+    from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.archive.snle_inference import train_snle
     
     # Setup
     simulator = PatchForagingDDM()

@@ -1,29 +1,43 @@
 """
-Simulator for patch foraging DDM.
+JAX-based simulator for patch foraging DDM.
+4 parameters: drift_rate, reward_bump, failure_bump, noise_std
+7 summary statistics: max time, mean time, std time, mean stops, std stops, mean rewards, std rewards
 
-Structure:
-1. Core simulation: _simulate_one_patch, sample_inter_site_interval
-2. Main interface: simulate_trial (takes parameter generator)
-3. Parameter generators: walk_params, step_change_params
-4. Convenience wrappers for common use cases
 """
 
-import torch
-import numpy as np
+import os
+# Force CPU backend on Apple Silicon to avoid Metal issues
+os.environ['JAX_PLATFORMS'] = 'cpu'
+
+import jax
+import jax.numpy as jnp
+from jax import random, jit, vmap
+
+from tensorflow_probability.substrates.jax import distributions as tfd
 
 
 def reward_probability(num_rewards, initial_prob=0.8, decay_rate=-0.1):
     """Exponential decay reward probability based on number of rewards collected"""
-    return initial_prob * torch.exp(torch.tensor(decay_rate * num_rewards))
+    return initial_prob * jnp.exp(decay_rate * num_rewards)
 
 
-class PatchForagingDDM:
+class PatchForagingDDM_JAX:
     """
-    DDM for patch foraging where:
-    - Drift pushes toward leaving threshold
-    - Rewards push away from threshold (negative bump)
-    - Failures push toward threshold (positive bump)
-    - Animal leaves when evidence >= threshold
+    JAX implementation of DDM for patch foraging.
+    Simulates patch foraging behavior with evidence accumulation, rewards, and patch leaving decisions.
+    4 parameters:
+        - drift_rate: evidence accumulation rate
+        - reward_bump: evidence boost from receiving reward
+        - failure_bump: evidence boost from not receiving reward
+        - noise_std: standard deviation of noise in evidence accumulation
+    7 summary statistics:
+        - max patch time
+        - mean patch time       
+        - std patch time
+        - mean stops
+        - std stops
+        - mean rewards
+        - std rewards
     """
     
     def __init__(self, 
@@ -34,7 +48,8 @@ class PatchForagingDDM:
                  interval_mean=1.0, 
                  interval_std=0.3, 
                  interval_min=0.1, 
-                 interval_max=5.0):
+                 interval_max=5.0,
+                 max_sites_per_window=500):  # For pre-allocation
         self.initial_prob = initial_prob
         self.decay_rate = decay_rate
         self.threshold = threshold
@@ -43,253 +58,219 @@ class PatchForagingDDM:
         self.interval_std = interval_std
         self.interval_min = interval_min
         self.interval_max = interval_max
+        self.max_sites_per_window = max_sites_per_window
+        
+        # JIT compile the core simulation function
+        self._simulate_one_window_jit = jit(self._simulate_one_window_core)
     
-    def sample_inter_site_interval(self):
-        """Sample time between odor sites (truncated Gaussian)"""
-        return torch.clamp(
-            self.interval_mean + self.interval_std * torch.randn(1),
-            min=self.interval_min,
-            max=self.interval_max
-        ).item()
-    
-    def _simulate_one_patch(self, theta: torch.Tensor, global_time: float, patch_start_time: float) -> tuple:
+    def _simulate_one_window_core(self, theta, rng_key):
         """
-        Core method: simulate a single patch until animal leaves.
+        Core JIT-compiled function to simulate one window.
+        Uses jax.lax.while_loop for efficient compilation.
         
         Args:
-            theta: [drift_rate, reward_bump, failure_bump, noise_std]
-            global_time: current global time
-            patch_start_time: when current patch started
-        
+            theta: (4,) array [drift_rate, reward_bump, failure_bump, noise_std]
+            rng_key: JAX random key
+            
         Returns:
-            patch_data: list of [time_in_patch, reward, stopped] for each site
-            new_global_time: updated global time after patch
+            window_data: (max_sites, 3) array [time_in_patch, reward, stopped]
+            summary_stats: (7,) array (max patch time, mean patch time, 
+                                        std patch time, mean stops, std stops, 
+                                        mean rewards, std rewards)
         """
         drift_rate, reward_bump, failure_bump, noise_std = theta
-        evidence = self.start_point
-        num_rewards = 0
-        patch_data = []
         
-        while True:
-            dt = self.sample_inter_site_interval()
-            global_time += dt
-            time_in_patch = global_time - patch_start_time
+        # Pre-allocate arrays
+        window_data = jnp.zeros((self.max_sites_per_window, 3))
+        
+        # Split RNG keys for different random operations
+        key_intervals, key_noise, key_rewards = random.split(rng_key, 3)
+        
+        # Pre-generate all random numbers (faster than generating in loop)
+        intervals = random.truncated_normal(
+            key_intervals, 
+            lower=(self.interval_min - self.interval_mean) / self.interval_std,
+            upper=(self.interval_max - self.interval_mean) / self.interval_std,
+            shape=(self.max_sites_per_window,)
+        ) * self.interval_std + self.interval_mean
+        
+        noise_samples = random.normal(key_noise, shape=(self.max_sites_per_window,))
+        reward_samples = random.uniform(key_rewards, shape=(self.max_sites_per_window,))
+        # State tuple for while loop: (evidence, num_rewards, site_idx, global_time, window_data)
+        def cond_fn(state):
+            evidence, num_rewards, site_idx, global_time, patch_time, window_data = state
+            return (site_idx < self.max_sites_per_window)
+        
+        def body_fn(state):
+            evidence, num_rewards, site_idx, global_time, patch_time, window_data = state
             
-            # Accumulate evidence
-            evidence += drift_rate * dt
-            if noise_std > 0:
-                evidence += noise_std * torch.randn(1).item() * np.sqrt(dt)
+            # Get pre-generated random values for this site
+            dt = intervals[site_idx]
+            noise = noise_samples[site_idx]
+            reward_sample = reward_samples[site_idx]
             
-            # Decision: leave or stop?
-            if evidence >= self.threshold:
-                patch_data.append([time_in_patch, 0, 0])  # Leave
-                break
-            else:
-                # Stop and check reward
-                reward_prob = reward_probability(num_rewards, self.initial_prob, self.decay_rate)
-                reward = int(torch.rand(1) < reward_prob)
-                patch_data.append([time_in_patch, reward, 1])
-                
-                # Update evidence
-                evidence += -reward_bump if reward else failure_bump
-                num_rewards += reward
-        total_time = global_time - patch_start_time
-        num_stops = len(patch_data)
-        summary_stats = torch.tensor([total_time, num_stops, num_rewards], dtype=torch.float32)
-    
-        return patch_data, global_time, summary_stats
-    
-    # ===== Main Interface =====
-    
-    def simulate_trial(self, param_generator, window_sites: int, return_aggregate: bool = False) -> tuple:
-        """
-        Simulate foraging trial with time-varying parameters.
-        
-        Args:
-            param_generator: Iterator that yields theta values for each patch
-            window_sites: Exact number of sites to return
-            return_aggregate: If True, return aggregate stats across patches.
-                            If False, return single-patch stats (only first patch).
-        
-        Returns:
-            data: (window_sites, 3) tensor [time_since_patch_start, reward, stopped]
-            summary_stats: (3,) for single patch OR (8,) for aggregate
-        """
-        data = []
-        patch_stats_list = []
-        true_theta = []
-        global_time = 0.0
-        patch_start_time = 0.0
-        
-        for theta in param_generator:
-            
-            true_theta.append(theta)
-            patch_data, global_time, summary_stats = self._simulate_one_patch(
-                theta, global_time, patch_start_time
+            # Update time and evidence
+            global_time = global_time + dt
+            patch_time = patch_time + dt  # Time spent in current patch
+            evidence = evidence + drift_rate * dt
+            evidence = jnp.where(
+                noise_std > 0,
+                evidence + noise_std * noise * jnp.sqrt(dt),
+                evidence
             )
             
-            data.extend(patch_data)
-            patch_stats_list.append(summary_stats)
-            patch_start_time = global_time
+            # Check if we should leave
+            should_leave = evidence >= self.threshold
             
-            if len(data) >= window_sites:
-                break
-        
-        data_tensor = torch.tensor(data[:window_sites], dtype=torch.float32)
-        
-        if return_aggregate:
-            # Return aggregate statistics across all patches
-            patch_stats = torch.stack(patch_stats_list)  # (num_patches, 3)
+            # If not leaving, check for reward
+            reward_prob = reward_probability(num_rewards, self.initial_prob, self.decay_rate)
+            reward = jnp.where(should_leave, 0, (reward_sample < reward_prob).astype(jnp.float32))
+            stopped = jnp.where(should_leave, 0, 1)
             
-            # Handle single patch case (std would be NaN)
-            if len(patch_stats) == 1:
-                aggregate_stats = torch.tensor([
-                    patch_stats[0, 0].item(),  # total_time
-                    0.0,                        # std total_time = 0 for single patch
-                    patch_stats[0, 1].item(),  # num_stops
-                    0.0,                        # std num_stops = 0
-                    patch_stats[0, 2].item(),  # num_rewards
-                    0.0,                        # std num_rewards = 0
-                    patch_stats[0, 2].item(),  # total rewards = same as mean
-                    1.0,                        # num_patches = 1
-                ], dtype=torch.float32)
-            else:
-                aggregate_stats = torch.tensor([
-                    patch_stats[:, 0].mean().item(),
-                    patch_stats[:, 0].std().item(),
-                    patch_stats[:, 1].mean().item(),
-                    patch_stats[:, 1].std().item(),
-                    patch_stats[:, 2].mean().item(),
-                    patch_stats[:, 2].std().item(),
-                    patch_stats[:, 2].sum().item(),
-                    float(len(patch_stats)),
-                ], dtype=torch.float32)
-            
-            return data_tensor, aggregate_stats, true_theta
-        else:
-            # Return only first patch statistics
-            return data_tensor, patch_stats_list[0], true_theta
-        
-        # ===== Parameter Generators =====
+            # Store data
+            window_data = window_data.at[site_idx].set(jnp.array([patch_time, reward, stopped]))
 
-    def evolve_params(self,
-        mode: str,
-        theta_init: torch.Tensor = None,
-        sigma: float = 0.0,
-        shift: float = 0.0,
-        bounds: tuple = None,
-        mean_patches_per_regime: int = 10,
-    ):
+            # Update evidence based on outcome
+            evidence = jnp.where(
+                should_leave,
+                self.start_point,  # reset evidence if leaving
+                evidence + jnp.where(reward > 0, -reward_bump, failure_bump)
+            )
+            
+            # Update state
+            num_rewards = jnp.where(should_leave, 0, num_rewards + reward)  # reset if leaving
+            patch_time = jnp.where(should_leave, 0.0, patch_time)  # reset patch time if leaving
+            
+            return (evidence, num_rewards, site_idx + 1, global_time, patch_time, window_data)
+        
+        # Initial state
+        init_state = (
+            jnp.array(self.start_point),  # evidence
+            jnp.array(0.0),                # num_rewards
+            jnp.array(0),                  # site_idx
+            jnp.array(0.0),                # global_time
+            jnp.array(0.0),                # patch_time
+            window_data                     # window_data array
+        )
+        
+        # Run simulation
+        final_state = jax.lax.while_loop(cond_fn, body_fn, init_state)
+        _, _, _, _, _, window_data = final_state
+        
+        # Compute number of stops
+        num_stops = jnp.sum(window_data[:, 2])
+
+        def single_patch_case(_):
+            return jnp.array([
+                jnp.max(window_data[:, 0]),   # total_time in patch max
+                jnp.mean(window_data[:, 0]),  # total_time in patch mean
+                0.0,                          # std total_time
+                jnp.mean(window_data[:, 2]),  # num_stops mean
+                0.0,                          # std num_stops
+                jnp.mean(window_data[:, 1]),  # num_rewards mean
+                0.0,                          # std num_rewards
+            ], dtype=jnp.float32)
+
+        def multi_patch_case(_):
+            return jnp.array([
+                jnp.max(window_data[:, 0]),
+                jnp.mean(window_data[:, 0]),
+                jnp.std(window_data[:, 0]),
+                jnp.mean(window_data[:, 2]),
+                jnp.std(window_data[:, 2]),
+                jnp.mean(window_data[:, 1]),
+                jnp.std(window_data[:, 1]),
+            ], dtype=jnp.float32)
+
+        summary_stats = jax.lax.cond(num_stops < 2, single_patch_case, multi_patch_case, operand=None)
+    
+        return window_data, summary_stats
+    
+    def simulate_one_window(self, theta, rng_key):
         """
-        Generator that yields evolving theta parameters according to the specified mode.
-
+        Simulate one window (user-facing API).
+        
         Args:
-            mode: 'walk' or 'step'.
-            theta_init: Initial parameters for 'walk' mode [drift_rate, reward_bump, failure_bump, noise_std].
-            sigma: Step size standard deviation for random walk.
-            shift: Directional shift added each walk step.
-            bounds: (low, high) tuple of parameter bounds as torch.Tensors.
-            mean_patches_per_regime: Average patches per regime in 'step' mode.
-
-        Yields:
-            theta (torch.Tensor): evolving parameter vector.
+            theta: (4,) array or list [drift_rate, reward_bump, failure_bump, noise_std]
+            rng_key: JAX random key
+            
+        Returns:
+            window_data: (num_sites, 3) array [time_in_patch, reward, stopped]
+            summary_stats: (7,) array (max patch time, mean patch time, 
+                                        std patch time, mean stops, std stops, 
+                                        mean rewards, std rewards)
         """
-        if mode not in {"walk", "step"}:
-            raise ValueError("mode must be either 'walk' or 'step'")
-
-        # Default bounds if none provided
-        if bounds is None:
-            low = torch.tensor([0.01, 0.01, 0.0, 0.0])
-            high = torch.tensor([1.5, 1.5, 1.5, 0.1])
+        theta = jnp.array(theta)
+        window_data, summary_stats = self._simulate_one_window_jit(theta, rng_key)
+        
+        return window_data, summary_stats
+    
+    # --- Define simulator function matching sbijax API ---
+    def simulator_fn(self, theta, seed):
+        """
+        Simulator function for sbijax.
+        Args:
+            seed: JAX random key
+            theta: dict with key 'theta' containing (n_batch, 4) array of parameters
+        Returns:
+            x: (n_batch, 7) array of summary statistics
+        """
+        # Extract theta array from dictionary
+        if isinstance(theta, dict):
+            theta_array = theta['theta']
         else:
-            low, high = bounds
+            theta_array = theta
+        
+        # Get batch size
+        if theta_array.ndim == 1:
+            theta_array = theta_array.reshape(1, -1)
+        n_batch = theta_array.shape[0]
+        
+        # Generate random keys for each sample
+        keys = random.split(seed, n_batch)
+        
+        # Simulate each sample
+        def simulate_one(key, theta_single):
+            _, summary_stats = self.simulate_one_window(theta_single, key)
+            return summary_stats
+        
+        # Use vmap to vectorize over batch
+        x = vmap(simulate_one)(keys, theta_array)
+        
+        return x
 
-        if mode == "walk":
-            if theta_init is None:
-                raise ValueError("theta_init must be provided for 'walk' mode.")
-            theta = theta_init.clone()
 
-            while True:
-                yield theta.clone()
-                theta = theta + torch.randn_like(theta) * sigma + shift
-                theta = torch.clamp(theta, low, high)
+def create_prior(prior_low=None, prior_high=None):
 
-        elif mode == "step":
-            while True:
-                current_theta = low + torch.rand_like(low) * (high - low)
-                regime_length = np.random.poisson(mean_patches_per_regime)
-                regime_length = max(regime_length, 1)
-                for _ in range(regime_length):
-                    yield current_theta.clone()
+    if prior_low is None or prior_high is None:
+        prior_low  = jnp.array([0.0, 0.0, 0.0, 0.0])
+        prior_high = jnp.array([1.0,  1.0,  1.0,  0.5])
 
+    prior_low  = jnp.array(prior_low)
+    prior_high = jnp.array(prior_high)
 
-    # ===== Convenience Wrappers =====
-
-    def simulate_with_walk(self, theta_mean: torch.Tensor, window_sites: int,
-                            sigma: float = 0.0, shift: float = 0.0) -> torch.Tensor:
-        """Simulate with parameters evolving via a random walk."""
-
-        param_gen = self.evolve_params(
-            mode="walk", theta_init=theta_mean, sigma=sigma, shift=shift
+    def prior_fn():
+        return tfd.JointDistributionNamed(
+            dict(
+                theta = tfd.Independent(
+                    tfd.Uniform(low=prior_low, high=prior_high),
+                    reinterpreted_batch_ndims=1
+                )
+            ),
+            batch_ndims=0
         )
-        return self.simulate_trial(param_gen, window_sites)
 
-    def simulate_with_steps(self, window_sites: int,
-                            mean_patches_per_regime: int = 10) -> torch.Tensor:
-        """Simulate with stepwise regime changes in parameters."""
-
-        param_gen = self.evolve_params(
-            mode="step", mean_patches_per_regime=mean_patches_per_regime
-        )
-        return self.simulate_trial(param_gen, window_sites)
-
-
-def create_prior():
-    """
-    Prior distribution for DDM parameters
-    
-    Returns:
-        BoxUniform prior over [drift_rate, reward_bump, failure_bump]
-    """
-    from sbi.utils.torchutils import BoxUniform
-
-    low = torch.tensor([0.01, 0.01, 0.0, 0.0])
-    high = torch.tensor([1.5, 1.5, 1.5, 0.1])
-    
-    return BoxUniform(
-        low=low,
-        high=high, 
-    ), low, high
+    return prior_fn
 
 # ===== Tests =====
-
 if __name__ == "__main__":
-    print("="*60)
-    print("Testing Simulator")
-    print("="*60)
+    # Simple test of simulator
+    simulator = PatchForagingDDM_JAX()
+    rng_key = random.PRNGKey(42)
+    theta = jnp.array([0.5, 0.5, 0.3, 0.005])
     
-    simulator = PatchForagingDDM()
-    
-    # Test 1: Walk parameters
-    print("\n1. Walk parameters")
-    theta_mean = torch.tensor([0.5, 0.6, 0.2, 0.05])
-    data_tensor, aggregate_stats, true_theta = simulator.simulate_with_walk(theta_mean, window_sites=100, sigma=0.0, shift=0.0)
-    print(f"   Shape: {data_tensor.shape}")
-    print(f"   Patches: {(data_tensor[:, 2] == 0).sum().item()}")
-
-    # Test 2: Step changes
-    print("\n2. Step change parameters")
-    data_tensor, aggregate_stats, true_theta = simulator.simulate_with_steps(window_sites=100, mean_patches_per_regime=5)
-    print(f"   Shape: {data_tensor.shape}")
-    print(f"   Patches: {(data_tensor[:, 2] == 0).sum().item()}")
-
-    # Test 3: Manual parameter generator usage
-    print("\n3. Manual generator usage")
-    param_gen = simulator.evolve_params(mode="step", mean_patches_per_regime=3)
-    data_tensor, aggregate_stats, true_theta= simulator.simulate_trial(param_gen, window_sites=50)
-    print(f"   Shape: {data_tensor.shape}")
-    print(f"   Patches: {(data_tensor[:, 2] == 0).sum().item()}")
-    
-    print("\n" + "="*60)
-    print("All tests passed!")
-    print("="*60)
+    window_data, summary_stats = simulator.simulate_one_window(theta, rng_key)
+    print("Window Data (first 10 sites):")
+    print(window_data[:10])
+    print("Summary Stats:")
+    print(summary_stats)

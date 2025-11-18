@@ -18,7 +18,7 @@ from jax import random
 def benchmark_pytorch():
     """Benchmark PyTorch simulator"""
     from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM, create_prior
-    from snle_inference import generate_likelihood_training_data
+    from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.archive.snle_inference import generate_likelihood_training_data
     
     print("\n" + "="*80)
     print("PYTORCH SIMULATOR")
@@ -118,7 +118,7 @@ def benchmark_jax_with_snle_interface():
     try:
         from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator_jax import PatchForagingDDM_JAX
         from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import create_prior
-        from snle_inference import generate_likelihood_training_data
+        from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.archive.snle_inference import generate_likelihood_training_data
         
         print("\n" + "="*80)
         print("JAX SIMULATOR (via SNLE interface)")

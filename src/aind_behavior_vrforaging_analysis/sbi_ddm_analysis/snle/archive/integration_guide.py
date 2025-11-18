@@ -43,7 +43,7 @@ plot_parameter_evolution(results, save_path='my_session_analysis.png')
 # ==============================================================================
 
 from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM, create_prior
-from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_inference import train_snle
+from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.archive.snle_inference import train_snle
 from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_utils import save_snle_model
 
 # Setup
