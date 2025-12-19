@@ -52,18 +52,40 @@ def extract_samples(inference_results):
 
 def plot_real_synth_hist(real_data,synthetic_data):
 
-    # List of variable names
-    var_names = [
-        "Max Patch Time", "Mean Patch Time", "Std Patch Time",
-        "Mean Stops", "Std Stops", "Mean Rewards", "Std Rewards"
+    var_names = [# Basic (7)
+    "max_time", "mean_time", "std_time", 
+    "mean_stops", "std_stops", "mean_rewards", "std_rewards",
+    
+    # Reward history (4) - KEY FEATURES
+    "mean_time_after_reward",    # Should be affected by reward_bump
+    "mean_time_after_failure",   # Should be affected by failure_bump
+    "std_time_after_reward",
+    "std_time_after_failure",
+    
+    # Temporal (5)
+    "early_mean", "late_mean", "temporal_trend",
+    "late_minus_early", "middle_mean",
+    
+    # Distribution (4)
+    "p25", "median", "p75", "iqr",
+    
+    # Sequential (3)
+    "autocorr_lag1", "diff_std", "mean_abs_change",
+    
+    # Reward stats (3)
+    "reward_rate", "mean_reward_trial", "prop_patches_with_reward",
+    
+    # Patch stats (3)
+    "n_patches", "mean_sites_per_patch", "stop_rate",
     ]
 
+    print(var_names)
     # Determine number of rows/cols for subplots
     n_vars = len(var_names)
     n_cols = 3
     n_rows = int(np.ceil(n_vars / n_cols))
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols*5, n_rows*4))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols*2.5, n_rows*2.5))
     axes = axes.flatten()
 
     # Function to clean up axis

@@ -17,19 +17,42 @@ os.environ['JAX_PLATFORMS'] = 'cpu'
 
 import jax.numpy as jnp
 from jax import random
+import optax
 
 from sbijax import NLE
-from sbijax.nn import make_maf
+from sbijax.nn import make_maf, make_spf
 
 from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_utils_jax import extract_samples
+
+
+def build_flow(flow_type = 'maf', n_dim_data = 29, hidden_dim = 64, num_layers = 5):
+    if flow_type == "maf":
+        return make_maf(
+            n_dimension=n_dim_data,
+            n_layers=num_layers,
+            hidden_sizes=(hidden_dim, hidden_dim),
+        )
+    
+    elif flow_type == "spf":
+        return make_spf(
+            n_dimension=n_dim_data,
+            range_min=-5,
+            range_max=5,
+        )
+    else:
+        raise ValueError(f"Unknown flow_type: {flow_type}")
+
 
 def train_snle(simulator, prior_fn, 
                mode='multi', 
                n_simulations=10000,
                n_iter=1000,
                batch_size=100,
-               n_early_stopping_patience=50,
+               n_early_stopping_patience=30,
                percentage_data_as_validation_set=0.1,
+               learning_rate = 1e-3,
+               hidden_dim = 64,
+               num_layers = 5,
                rng_key=None):
     """
     Train SNLE to learn p(summary_stats | theta) using sbijax.
@@ -63,18 +86,21 @@ def train_snle(simulator, prior_fn,
     # Generate one sample to get dimensions
     rng_key, test_key = random.split(rng_key)
     test_theta = prior_fn().sample(seed=test_key)
-    test_x = simulator.simulator_fn(test_theta, test_key)
+    test_x = simulator.simulator_fn(seed=test_key, theta=test_theta)
 
-    n_dim_data = test_x.shape[-1]  # should be 7
+    n_dim_data = test_x.shape[-1]  # should be 29
     
     print(f"Data dimension: {n_dim_data}")
     
-    # Create MAF with appropriate dimension
-    neural_network = make_maf(n_dimension=n_dim_data)
+    flow = build_flow(flow_type="maf",
+                      n_dim_data=n_dim_data,
+                      hidden_dim=hidden_dim,
+                      num_layers=num_layers
+                      )
     
     # --- 4. Create SNLE model ---
     fns = prior_fn, simulator.simulator_fn
-    snle = NLE(fns, neural_network) #oddly this is what SNLE is called in sbijax - https://sbijax.readthedocs.io/en/latest/sbijax.html#sbijax.NLE
+    snle = NLE(fns, flow) #oddly this is what SNLE is called in sbijax - https://sbijax.readthedocs.io/en/latest/sbijax.html#sbijax.NLE
     
     # --- 5. Simulate training data ---
     print(f"\nSimulating {n_simulations} training samples...")
@@ -104,15 +130,22 @@ def train_snle(simulator, prior_fn,
     # --- 6. Train the model ---
     print(f"Training SNLE...")
 
-    # Create custom optimizer with lower learning rate
-    optimizer = adam(learning_rate=5e-4)
+    # learning-rate schedule
+    schedule = optax.exponential_decay(
+        init_value=learning_rate,      # starting LR
+        transition_steps=200, # how often to decay
+        decay_rate=0.99,      # multiplier
+        staircase=True,
+    )
+
+    optimizer = optax.adam(schedule)
 
     rng_key, train_key = random.split(rng_key)
     
     snle_params, losses = snle.fit(
         train_key, 
         data=normalized_data,
-        optimizer = optimizer
+        optimizer = optimizer,
         n_iter=n_iter,
         batch_size=batch_size,
         n_early_stopping_patience=n_early_stopping_patience,

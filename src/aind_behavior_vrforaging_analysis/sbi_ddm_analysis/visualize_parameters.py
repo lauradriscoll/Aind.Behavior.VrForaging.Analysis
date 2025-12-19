@@ -257,7 +257,7 @@ def plot_all_parameter_combinations(
         param2_name='failure_bump',
         param1_range=(0., 1.),
         param2_range=(0., 1.),
-        fixed_params={'drift_rate': 0.5, 'noise_std': 0.05},
+        fixed_params={'drift_rate': 0.2, 'noise_std': 0.05},
         grid_size=grid_size,
         window_sites=window_sites,
         save_path=f'{save_dir}/grid_reward_vs_failure.png'
@@ -270,7 +270,7 @@ def plot_all_parameter_combinations(
         param2_name='noise_std',
         param1_range=(0., 1.),
         param2_range=(0., 0.5),
-        fixed_params={'drift_rate': 0.5, 'failure_bump': 0.3},
+        fixed_params={'drift_rate': 0.2, 'failure_bump': 0.3},
         grid_size=grid_size,
         window_sites=window_sites,
         save_path=f'{save_dir}/grid_reward_vs_noise.png'
@@ -283,7 +283,7 @@ def plot_all_parameter_combinations(
         param2_name='noise_std',
         param1_range=(0., 1.),
         param2_range=(0., 0.5),
-        fixed_params={'drift_rate': 0.5, 'reward_bump': 0.6},
+        fixed_params={'drift_rate': 0.2, 'reward_bump': 0.6},
         grid_size=grid_size,
         window_sites=window_sites,
         save_path=f'{save_dir}/grid_failure_vs_noise.png'
@@ -310,8 +310,8 @@ def plot_parameter_effect_summary(
     fig, axes = plt.subplots(4, 3, figsize=(15, 16))
     
     param_names = ['drift_rate', 'reward_bump', 'failure_bump', 'noise_std']
-    param_ranges = [(0.2, 1.5), (0.2, 1.5), (0.0, 1.2), (0.0, 0.1)]
-    base_theta = np.array([0.5, 0.6, 0.3, 0.05])
+    param_ranges = [(0.1, 0.6), (0.0, 1.2), (0.0, 1.2), (0.05, 0.5)]
+    base_theta = np.array([0.3, 0.3, 0.3, 0.05])
     
     print("\nGenerating parameter effect summary...")
     
@@ -361,8 +361,8 @@ def plot_noise_comparison(
     fig, axes = plt.subplots(2, 3, figsize=(15, 8))
     axes = axes.flatten()
     
-    base_theta = np.array([0.5, 0.6, 0.3, 0.0])  # Start with no noise
-    noise_levels = [0.0, 0.02, 0.04, 0.06, 0.08, 0.1]
+    base_theta = np.array([0.3, 0.3, 0.3, 0.0])  # Start with no noise
+    noise_levels = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
     
     print("\nGenerating noise comparison...")
     

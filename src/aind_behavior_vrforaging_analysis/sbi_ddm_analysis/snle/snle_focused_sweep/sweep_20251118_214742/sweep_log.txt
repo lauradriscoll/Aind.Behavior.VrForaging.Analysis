@@ -1,0 +1,2 @@
+2025-11-18 21:47:42,797 - INFO - Running 20 sweep configurations
+2025-11-18 21:47:42,893 - INFO - Training with config: {'n_iter': 1000, 'patience': 30, 'batch_size': 512, 'n_simulations': 750000.0, 'learning_rate': 0.0003, 'hidden_dim': 256, 'num_layers': 12}

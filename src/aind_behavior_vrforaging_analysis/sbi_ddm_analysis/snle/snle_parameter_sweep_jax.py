@@ -1,70 +1,67 @@
-"""
-Simple SNLE Parameter Sweep (JAX version)
------------------------------------------
-Evaluates how training size (num_simulations) affects posterior accuracy.
-
-Uses: PatchForagingDDM_JAX simulator
-"""
-
 import os
+# Force CPU backend on Apple Silicon to avoid Metal issues
 os.environ['JAX_PLATFORMS'] = 'cpu'
 
-import numpy as np
-import pandas as pd
+from itertools import product
 from datetime import datetime
 import logging
+import random as py_random
+
 import jax.numpy as jnp
 from jax import random
+import pandas as pd
 
 from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM_JAX, create_prior
 from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_inference_jax import train_snle, infer_parameters_snle
 
+# --------------------------
+# Focused sweep configuration
+# --------------------------
+SWEEP_CONFIG_FOCUSED = {
+    "n_simulations": [1e5, 3e5, 5e5, 7.5e5, 1e6],
+    "learning_rate": [1e-3, 3e-4, 1e-4],
+    "hidden_dim": [64, 128, 256],
+    "num_layers": [4, 8, 12],
+}
 
-# --- Sweep parameters ---
-NUM_SIMULATIONS = [10000, 50000, 100000]
+# Fixed defaults for other parameters
+DEFAULT_PARAMS = {
+    "n_iter": 1000,
+    "patience": 30,
+    "batch_size": 512,
+}
 
 TEST_CASES = [
-    ("low_drift", jnp.array([0.2, 0.8, 0.3, 0.01])),
-    ("high_drift", jnp.array([0.8, 0.2, 0.3, 0.01])),
-    ("balanced", jnp.array([0.5, 0.5, 0.5, 0.01])),
+    ("low_drift", jnp.array([0.2, 0.8, 0.3, 0.1])),
+    ("high_drift", jnp.array([0.8, 0.2, 0.3, 0.1])),
+    ("balanced", jnp.array([0.5, 0.5, 0.5, 0.2])),
+    ("low_reward", jnp.array([0.05, 0.5, 0.5, 0.1])),
+    ("high_reward", jnp.array([0.8, 0.5, 0.5, 0.1])),
+    ("low_failure", jnp.array([0.5, 0.5, 0.05, 0.1])),
+    ("high_failure", jnp.array([0.5, 0.5, 0.95, 0.1])),
+    ("high_noise", jnp.array([0.5, 0.5, 0.5, 0.4])),
 ]
 
 
-# --- Helpers ---
+# --------------------------
+# Logger setup
+# --------------------------
 def setup_logger(results_dir):
-    """Create logger that writes to both file and console."""
     log_file = os.path.join(results_dir, "sweep_log.txt")
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.FileHandler(log_file),
-            logging.StreamHandler()
-        ]
+        handlers=[logging.FileHandler(log_file), logging.StreamHandler()]
     )
-    return logging.getLogger("sweep")
+    return logging.getLogger("focused_sweep")
 
-
+# --------------------------
+# Evaluate SNLE
+# --------------------------
 def evaluate_case(snle, snle_params, simulator, true_theta, y_mean, y_std, rng_key):
-    """
-    Evaluate SNLE on a single test case.
-    
-    Args:
-        snle: Trained SNLE model
-        snle_params: Trained parameters
-        simulator: PatchForagingDDM_JAX instance
-        true_theta: True parameter values (4,)
-        y_mean, y_std: Normalization statistics
-        rng_key: JAX random key
-        
-    Returns:
-        dict with evaluation metrics
-    """
-    # Generate one observed dataset from true_theta
     rng_key, obs_key = random.split(rng_key)
     _, observed_stats = simulator.simulate_one_window(true_theta, obs_key)
-    
-    # Infer posterior
+
     rng_key, infer_key = random.split(rng_key)
     posterior_samples, _ = infer_parameters_snle(
         snle=snle,
@@ -77,16 +74,14 @@ def evaluate_case(snle, snle_params, simulator, true_theta, y_mean, y_std, rng_k
         num_chains=4,
         rng_key=infer_key
     )
-    
-    # Compute MAE (mean absolute error)
+
     posterior_mean = posterior_samples.mean(axis=0)
     mae = jnp.abs(posterior_mean - true_theta).mean()
-    
-    # Compute coverage (does true_theta fall within 95% credible interval?)
+
     lower = jnp.percentile(posterior_samples, 2.5, axis=0)
     upper = jnp.percentile(posterior_samples, 97.5, axis=0)
     coverage = jnp.mean((true_theta >= lower) & (true_theta <= upper))
-    
+
     return {
         "mae": float(mae),
         "coverage": float(coverage),
@@ -94,125 +89,96 @@ def evaluate_case(snle, snle_params, simulator, true_theta, y_mean, y_std, rng_k
         "posterior_std": posterior_samples.std(axis=0).tolist(),
     }
 
+# --------------------------
+# Train SNLE for a single sweep config
+# --------------------------
+def train_and_eval(config, results_dir, rng_key, logger):
+    full_config = {**DEFAULT_PARAMS, **config}
+    logger.info(f"Training with config: {full_config}")
 
-def train_and_eval(num_sims, results_dir, rng_key, logger):
-    """
-    Train SNLE and evaluate on test cases.
-    
-    Args:
-        num_sims: Number of simulations for training
-        results_dir: Directory to save results
-        rng_key: JAX random key
-        logger: Logger instance
-        
-    Returns:
-        DataFrame with results for all test cases
-    """
-    logger.info(f"\n{'='*60}")
-    logger.info(f"Training SNLE: {num_sims} simulations")
-    logger.info(f"{'='*60}")
-
-    # Initialize simulator and prior
     simulator = PatchForagingDDM_JAX()
     prior_fn = create_prior(
         prior_low=jnp.array([0.0, 0.0, 0.0, 0.0]),
-        prior_high=jnp.array([1.0, 1.0, 1.0, 0.01])
+        prior_high=jnp.array([1.0, 1.0, 1.0, 0.5])
     )
-    
-    # Train SNLE
+
     rng_key, train_key = random.split(rng_key)
     snle, snle_params, losses, _, y_mean, y_std = train_snle(
         simulator=simulator,
         prior_fn=prior_fn,
         mode='multi',
-        n_simulations=int(num_sims),
+        n_simulations=int(full_config["n_simulations"]),
+        learning_rate=full_config["learning_rate"],
+        n_iter=full_config["n_iter"],
+        n_early_stopping_patience=full_config["patience"],
+        batch_size=full_config["batch_size"],
+        hidden_dim=full_config["hidden_dim"],
+        num_layers=full_config["num_layers"],
         rng_key=train_key,
     )
-    
+
     logger.info(f"Training complete. Final loss: {losses}")
-    
-    # Evaluate on test cases
+
     results = []
     for case_name, true_theta in TEST_CASES:
-        logger.info(f"\nEvaluating case: {case_name}")
-        logger.info(f"True theta: {true_theta}")
-        
         rng_key, eval_key = random.split(rng_key)
-        metrics = evaluate_case(
-            snle=snle,
-            snle_params=snle_params,
-            simulator=simulator,
-            true_theta=true_theta,
-            y_mean=y_mean,
-            y_std=y_std,
-            rng_key=eval_key
-        )
-        
-        logger.info(f"  MAE: {metrics['mae']:.4f}")
-        logger.info(f"  Coverage: {metrics['coverage']:.2f}")
-        logger.info(f"  Posterior mean: {metrics['posterior_mean']}")
-        
+        metrics = evaluate_case(snle, snle_params, simulator, true_theta, y_mean, y_std, eval_key)
+        metrics.update(full_config)
         metrics["case"] = case_name
         metrics["true_theta"] = true_theta.tolist()
         results.append(metrics)
-    
-    # Create DataFrame and save
+
     df = pd.DataFrame(results)
-    df["num_simulations"] = num_sims
-    
-    # Append to summary CSV
-    csv_path = os.path.join(results_dir, "sweep_summary.csv")
+    csv_path = os.path.join(results_dir, "focused_sweep_results.csv")
     header = not os.path.exists(csv_path)
     df.to_csv(csv_path, mode="a", header=header, index=False)
-    
-    logger.info(f"\nResults saved to {csv_path}")
-    
+
     return df
 
-
-# --- Main sweep ---
-def run_sweep(base_dir="snle_sweep_jax"):
-    """
-    Run parameter sweep over num_simulations.
+# --------------------------
+# Generate sweep configurations
+# --------------------------
+def generate_sweep_configs(randomized=False, max_configs=30):
+    keys, values = zip(*SWEEP_CONFIG_FOCUSED.items())
+    all_configs = [dict(zip(keys, vals)) for vals in product(*values)]
     
-    Args:
-        base_dir: Base directory for results
-        
-    Returns:
-        results_dir: Path to results directory
-        all_results: Combined DataFrame with all results
-    """
+    if randomized and len(all_configs) > max_configs:
+        py_random.seed(0)
+        all_configs = py_random.sample(all_configs, max_configs)
+    
+    return all_configs
+
+# --------------------------
+# Run full sweep
+# --------------------------
+def run_sweep(base_dir="snle_focused_sweep", randomized=False, max_configs=30):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_dir = os.path.join(base_dir, f"sweep_{timestamp}")
     os.makedirs(results_dir, exist_ok=True)
-    
-    logger = setup_logger(results_dir)
-    logger.info(f"Starting parameter sweep")
-    logger.info(f"Results directory: {results_dir}")
-    logger.info(f"Sweep parameters: {NUM_SIMULATIONS}")
-    logger.info(f"Test cases: {[name for name, _ in TEST_CASES]}")
 
+    logger = setup_logger(results_dir)
     rng_key = random.PRNGKey(0)
     all_results = []
 
-    for num_sims in NUM_SIMULATIONS:
+    sweep_configs = generate_sweep_configs(randomized=randomized, max_configs=max_configs)
+    logger.info(f"Running {len(sweep_configs)} sweep configurations")
+
+    for config in sweep_configs:
         try:
             rng_key, sweep_key = random.split(rng_key)
-            df = train_and_eval(num_sims, results_dir, sweep_key, logger)
+            df = train_and_eval(config, results_dir, sweep_key, logger)
             all_results.append(df)
         except Exception as e:
-            logger.error(f"Failed for num_sims={num_sims}: {e}", exc_info=True)
+            logger.error(f"Failed for config {config}: {e}", exc_info=True)
 
-    logger.info("\n" + "="*60)
-    logger.info("Sweep complete!")
-    logger.info("="*60)
-    
     final_df = pd.concat(all_results, ignore_index=True) if all_results else pd.DataFrame()
     return results_dir, final_df
 
-
+# --------------------------
+# Main
+# --------------------------
 if __name__ == "__main__":
-    results_dir, results_df = run_sweep()
-    print(f"\nResults saved to: {results_dir}")
-    print("\nSummary:")
-    print(results_df[["num_simulations", "case", "mae", "coverage"]])
+    # randomized=True to sample a subset if too many combinations
+    results_dir, results_df = run_sweep(randomized=True, max_configs=20)
+    print(f"Results saved to: {results_dir}")
+    print(results_df[["n_simulations", "learning_rate", "hidden_dim", "case", "mae", "coverage"]])

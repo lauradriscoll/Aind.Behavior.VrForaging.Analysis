@@ -14,6 +14,7 @@ import jax.numpy as jnp
 from jax import random, jit, vmap
 
 from tensorflow_probability.substrates.jax import distributions as tfd
+from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.enhanced_stats import compute_enhanced_summary_stats
 
 
 def reward_probability(num_rewards, initial_prob=0.8, decay_rate=-0.1):
@@ -161,28 +162,28 @@ class PatchForagingDDM_JAX:
         num_stops = jnp.sum(window_data[:, 2])
 
         def single_patch_case(_):
-            return jnp.array([
-                jnp.max(window_data[:, 0]),   # total_time in patch max
-                jnp.mean(window_data[:, 0]),  # total_time in patch mean
-                0.0,                          # std total_time
-                jnp.mean(window_data[:, 2]),  # num_stops mean
-                0.0,                          # std num_stops
-                jnp.mean(window_data[:, 1]),  # num_rewards mean
-                0.0,                          # std num_rewards
-            ], dtype=jnp.float32)
+            patch_times = window_data[:, 0]
+            rewards = window_data[:, 1]
+            stops = window_data[:, 2]
+            
+            # Return simplified stats for single patch
+            return jnp.concatenate([
+                jnp.array([
+                    jnp.max(patch_times), jnp.mean(patch_times), 0.0,
+                    jnp.mean(stops), 0.0, jnp.mean(rewards), 0.0,
+                ]),
+                jnp.zeros(30)  # Remaining features undefined for single patch
+            ])
 
         def multi_patch_case(_):
-            return jnp.array([
-                jnp.max(window_data[:, 0]),
-                jnp.mean(window_data[:, 0]),
-                jnp.std(window_data[:, 0]),
-                jnp.mean(window_data[:, 2]),
-                jnp.std(window_data[:, 2]),
-                jnp.mean(window_data[:, 1]),
-                jnp.std(window_data[:, 1]),
-            ], dtype=jnp.float32)
+            return compute_enhanced_summary_stats(window_data)
 
-        summary_stats = jax.lax.cond(num_stops < 2, single_patch_case, multi_patch_case, operand=None)
+        summary_stats = jax.lax.cond(
+            num_stops < 2, 
+            single_patch_case, 
+            multi_patch_case, 
+            operand=None
+        )
     
         return window_data, summary_stats
     
@@ -206,45 +207,44 @@ class PatchForagingDDM_JAX:
         return window_data, summary_stats
     
     # --- Define simulator function matching sbijax API ---
-    def simulator_fn(self, theta, seed):
+    def simulator_fn(self, *, seed, theta):
         """
-        Simulator function for sbijax.
+        Simulator function compatible with sbijax.
         Args:
             seed: JAX random key
-            theta: dict with key 'theta' containing (n_batch, 4) array of parameters
+            theta: (n_batch, n_params) array or dict with key 'theta'
         Returns:
-            x: (n_batch, 7) array of summary statistics
+            x: (n_batch, n_summary_stats) array
         """
-        # Extract theta array from dictionary
+        # Extract theta array
         if isinstance(theta, dict):
             theta_array = theta['theta']
         else:
             theta_array = theta
-        
-        # Get batch size
+
+        # Ensure batch dimension
         if theta_array.ndim == 1:
             theta_array = theta_array.reshape(1, -1)
         n_batch = theta_array.shape[0]
-        
-        # Generate random keys for each sample
+
+        # Generate keys
         keys = random.split(seed, n_batch)
-        
-        # Simulate each sample
-        def simulate_one(key, theta_single):
-            _, summary_stats = self.simulate_one_window(theta_single, key)
-            return summary_stats
-        
-        # Use vmap to vectorize over batch
+
+        # Vectorized simulation
+        def simulate_one(key, th):
+            _, stats = self.simulate_one_window(th, key)
+            return stats
+
         x = vmap(simulate_one)(keys, theta_array)
-        
         return x
+
 
 
 def create_prior(prior_low=None, prior_high=None):
 
     if prior_low is None or prior_high is None:
-        prior_low  = jnp.array([0.0, 0.0, 0.0, 0.0])
-        prior_high = jnp.array([1.0,  1.0,  1.0,  0.5])
+        prior_low  = jnp.array([0.1, 0.3, 0.3, 0.05])
+        prior_high = jnp.array([1,  1,  1,  0.5])
 
     prior_low  = jnp.array(prior_low)
     prior_high = jnp.array(prior_high)
@@ -265,11 +265,13 @@ def create_prior(prior_low=None, prior_high=None):
 # ===== Tests =====
 if __name__ == "__main__":
     # Simple test of simulator
+    rng_key = random.PRNGKey(0)
     simulator = PatchForagingDDM_JAX()
-    rng_key = random.PRNGKey(42)
-    theta = jnp.array([0.5, 0.5, 0.3, 0.005])
+    rng_key, subkey = random.split(rng_key)
+    theta = prior_fn().sample(seed=subkey)['theta']
     
-    window_data, summary_stats = simulator.simulate_one_window(theta, rng_key)
+    rng_key, subkey = random.split(rng_key)
+    window_data, summary_stats = simulator.simulate_one_window(theta, subkey)
     print("Window Data (first 10 sites):")
     print(window_data[:10])
     print("Summary Stats:")
