@@ -32,16 +32,15 @@ DEFAULT_PARAMS = {
 }
 
 TEST_CASES = [
-    ("low_drift", jnp.array([0.2, 0.8, 0.3, 0.1])),
-    ("high_drift", jnp.array([0.8, 0.2, 0.3, 0.1])),
-    ("balanced", jnp.array([0.5, 0.5, 0.5, 0.2])),
-    ("low_reward", jnp.array([0.05, 0.5, 0.5, 0.1])),
-    ("high_reward", jnp.array([0.8, 0.5, 0.5, 0.1])),
-    ("low_failure", jnp.array([0.5, 0.5, 0.05, 0.1])),
-    ("high_failure", jnp.array([0.5, 0.5, 0.95, 0.1])),
-    ("high_noise", jnp.array([0.5, 0.5, 0.5, 0.4])),
+    ("low_drift", jnp.array([0.1, 0.3, 0.3, 0.1])),
+    ("high_drift", jnp.array([0.6, 0.3, 0.3, 0.1])),
+    ("balanced", jnp.array([0.4, 0.4, 0.4, 0.2])),
+    ("low_reward", jnp.array([0.4, 0.3, 0.5, 0.1])),
+    ("high_reward", jnp.array([0.4, 1., 0.5, 0.1])),
+    ("low_failure", jnp.array([0.4, 0.5, 0.3, 0.1])),
+    ("high_failure", jnp.array([0.4, 0.5, 1., 0.1])),
+    ("high_noise", jnp.array([0.4, 0.4, 0.4, 0.5])),
 ]
-
 
 # --------------------------
 # Logger setup
@@ -97,10 +96,7 @@ def train_and_eval(config, results_dir, rng_key, logger):
     logger.info(f"Training with config: {full_config}")
 
     simulator = PatchForagingDDM_JAX()
-    prior_fn = create_prior(
-        prior_low=jnp.array([0.0, 0.0, 0.0, 0.0]),
-        prior_high=jnp.array([1.0, 1.0, 1.0, 0.5])
-    )
+    prior_fn = create_prior()
 
     rng_key, train_key = random.split(rng_key)
     snle, snle_params, losses, _, y_mean, y_std = train_snle(
@@ -129,7 +125,7 @@ def train_and_eval(config, results_dir, rng_key, logger):
         results.append(metrics)
 
     df = pd.DataFrame(results)
-    csv_path = os.path.join(results_dir, "focused_sweep_results.csv")
+    csv_path = os.path.join(results_dir, "sweep_results.csv")
     header = not os.path.exists(csv_path)
     df.to_csv(csv_path, mode="a", header=header, index=False)
 
@@ -151,7 +147,7 @@ def generate_sweep_configs(randomized=False, max_configs=30):
 # --------------------------
 # Run full sweep
 # --------------------------
-def run_sweep(base_dir="snle_focused_sweep", randomized=False, max_configs=30):
+def run_sweep(base_dir="snle_sweep", randomized=False, max_configs=30):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_dir = os.path.join(base_dir, f"sweep_{timestamp}")
     os.makedirs(results_dir, exist_ok=True)

@@ -46,19 +46,28 @@ class PatchForagingDDM_JAX:
                  decay_rate=-0.1,
                  threshold=1.0,
                  start_point=0.0,
-                 interval_mean=1.0, 
-                 interval_std=0.3, 
-                 interval_min=0.1, 
-                 interval_max=5.0,
-                 max_sites_per_window=500):  # For pre-allocation
+                 interval_min=20.0,        # InterSite gap minimum (cm)
+                 interval_scale=19.0,      # InterSite gap exponential scale (cm)
+                 interval_normalization=88.58,  # For normalizing to ~1.0
+                 odor_site_length=50.0,    # Physical length of OdorSite (cm)
+                 max_sites_per_window=500):
+        
         self.initial_prob = initial_prob
         self.decay_rate = decay_rate
         self.threshold = threshold
         self.start_point = start_point
-        self.interval_mean = interval_mean
-        self.interval_std = interval_std
-        self.interval_min = interval_min
-        self.interval_max = interval_max
+        
+        # Store interval parameters (raw, in cm)
+        self.interval_min_raw = interval_min
+        self.interval_scale_raw = interval_scale
+        self.interval_normalization = interval_normalization
+        self.odor_site_length_raw = odor_site_length
+        
+        # Normalized interval parameters (for simulation)
+        self.interval_min = interval_min / interval_normalization
+        self.interval_scale = interval_scale / interval_normalization
+        self.odor_site_length = odor_site_length / interval_normalization
+        
         self.max_sites_per_window = max_sites_per_window
         
         # JIT compile the core simulation function
@@ -75,9 +84,7 @@ class PatchForagingDDM_JAX:
             
         Returns:
             window_data: (max_sites, 3) array [time_in_patch, reward, stopped]
-            summary_stats: (7,) array (max patch time, mean patch time, 
-                                        std patch time, mean stops, std stops, 
-                                        mean rewards, std rewards)
+            summary_stats: (37,) array of summary statistics
         """
         drift_rate, reward_bump, failure_bump, noise_std = theta
         
@@ -87,17 +94,17 @@ class PatchForagingDDM_JAX:
         # Split RNG keys for different random operations
         key_intervals, key_noise, key_rewards = random.split(rng_key, 3)
         
-        # Pre-generate all random numbers (faster than generating in loop)
-        intervals = random.truncated_normal(
-            key_intervals, 
-            lower=(self.interval_min - self.interval_mean) / self.interval_std,
-            upper=(self.interval_max - self.interval_mean) / self.interval_std,
+        # Pre-generate InterSite gaps (NOT full inter-odor spacing)
+        # These are the gaps between decision points
+        intersite_gaps = self.interval_min + random.exponential(
+            key_intervals,
             shape=(self.max_sites_per_window,)
-        ) * self.interval_std + self.interval_mean
+        ) * self.interval_scale
         
         noise_samples = random.normal(key_noise, shape=(self.max_sites_per_window,))
         reward_samples = random.uniform(key_rewards, shape=(self.max_sites_per_window,))
-        # State tuple for while loop: (evidence, num_rewards, site_idx, global_time, window_data)
+        
+        # State tuple for while loop
         def cond_fn(state):
             evidence, num_rewards, site_idx, global_time, patch_time, window_data = state
             return (site_idx < self.max_sites_per_window)
@@ -106,9 +113,18 @@ class PatchForagingDDM_JAX:
             evidence, num_rewards, site_idx, global_time, patch_time, window_data = state
             
             # Get pre-generated random values for this site
-            dt = intervals[site_idx]
+            intersite_gap = intersite_gaps[site_idx]
             noise = noise_samples[site_idx]
             reward_sample = reward_samples[site_idx]
+            
+            # Calculate actual interval:
+            # - First site (site_idx=0): just the InterSite gap
+            # - Subsequent sites: InterSite gap + OdorSite length (50 cm)
+            dt = jnp.where(
+                site_idx == 0,
+                intersite_gap,  # First site: just gap from patch entry
+                self.odor_site_length + intersite_gap  # OdorSite of previous site + gap
+            )
             
             # Update time and evidence
             global_time = global_time + dt
@@ -197,9 +213,7 @@ class PatchForagingDDM_JAX:
             
         Returns:
             window_data: (num_sites, 3) array [time_in_patch, reward, stopped]
-            summary_stats: (7,) array (max patch time, mean patch time, 
-                                        std patch time, mean stops, std stops, 
-                                        mean rewards, std rewards)
+            summary_stats: (37,) array of summary statistics
         """
         theta = jnp.array(theta)
         window_data, summary_stats = self._simulate_one_window_jit(theta, rng_key)
@@ -243,8 +257,8 @@ class PatchForagingDDM_JAX:
 def create_prior(prior_low=None, prior_high=None):
 
     if prior_low is None or prior_high is None:
-        prior_low  = jnp.array([0.1, 0.3, 0.3, 0.05])
-        prior_high = jnp.array([1,  1,  1,  0.5])
+        prior_low  = jnp.array([0.0, 0.0, 0.0, 0.05])
+        prior_high = jnp.array([2,  2,  2,  0.5])
 
     prior_low  = jnp.array(prior_low)
     prior_high = jnp.array(prior_high)
@@ -267,6 +281,8 @@ if __name__ == "__main__":
     # Simple test of simulator
     rng_key = random.PRNGKey(0)
     simulator = PatchForagingDDM_JAX()
+    prior_fn = create_prior()
+    
     rng_key, subkey = random.split(rng_key)
     theta = prior_fn().sample(seed=subkey)['theta']
     
@@ -274,5 +290,5 @@ if __name__ == "__main__":
     window_data, summary_stats = simulator.simulate_one_window(theta, subkey)
     print("Window Data (first 10 sites):")
     print(window_data[:10])
-    print("Summary Stats:")
-    print(summary_stats)
+    print("\nSummary Stats:")
+    print(summary_stats[:7])  # Just show first 7 basic stats
