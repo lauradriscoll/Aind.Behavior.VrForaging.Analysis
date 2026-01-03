@@ -85,6 +85,8 @@ def find_sessions_relative_to_date(
 
     directory = os.path.join(base_path, mouse)
     files = os.listdir(directory)
+    # Filter out hidden files and non-directories
+    files = [f for f in files if not f.startswith('.') and os.path.isdir(os.path.join(directory, f))]
     sorted_files = sorted(files, key=lambda x: os.path.getctime(os.path.join(directory, x)))
 
     matching_sessions = []

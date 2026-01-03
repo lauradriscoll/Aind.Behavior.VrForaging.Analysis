@@ -12,6 +12,7 @@ Workflow:
 
 import os
 os.environ['JAX_PLATFORMS'] = 'cpu'
+os.environ['JAX_ENABLE_X64'] = 'False'  # Disable 64-bit (faster)
 
 import numpy as np
 import jax.numpy as jnp
@@ -53,13 +54,17 @@ CONFIG = {
     'prior_high': [2.0, 2.0, 2.0, 0.5],
     
     # Training settings - 2M samples
-    'n_simulations': 2_000_000,
-    'n_iter': 2000,
-    'batch_size': 256,
+    'n_simulations': 10_000,
+    'n_iter': 500,
+    'batch_size': 128,
     'n_early_stopping_patience': 50,
     'learning_rate': 1e-3,
-    'hidden_dim': 128,
-    'num_layers': 8,
+    'hidden_dim': 64,
+    'num_layers': 5,
+
+    # Window settings
+    'window_size': 100,  # Number of sites per window
+    'step_size': 10,     # Overlap between windows (used during extraction)
     
     # Validation settings
     'n_validation_tests': 100,
@@ -107,7 +112,7 @@ simulator = PatchForagingDDM_JAX(
     interval_scale=CONFIG['interval_scale'],
     interval_normalization=CONFIG['interval_normalization'],
     odor_site_length=CONFIG['odor_site_length'],
-    max_sites_per_window=100
+    max_sites_per_window=CONFIG['window_size']
 )
 
 prior_fn = create_prior(
@@ -246,7 +251,8 @@ def load_windows_for_odor(base_path, odor_type, engagement_filter=True, min_entr
     
     for idx, row in successful_sessions.iterrows():
         session_dir = Path(row['session_dir'])
-        odor_dir = session_dir / "window_data_by_odor" / odor_type
+        # Use window size in folder name
+        odor_dir = session_dir / f"{window_size}_window_data_by_odor" / odor_type
         
         if not odor_dir.exists():
             continue

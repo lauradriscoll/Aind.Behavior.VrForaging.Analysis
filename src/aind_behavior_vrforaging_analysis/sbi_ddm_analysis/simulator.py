@@ -14,7 +14,7 @@ import jax.numpy as jnp
 from jax import random, jit, vmap
 
 from tensorflow_probability.substrates.jax import distributions as tfd
-from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.enhanced_stats import compute_enhanced_summary_stats
+from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.enhanced_stats_35 import compute_summary_stats
 
 
 def reward_probability(num_rewards, initial_prob=0.8, decay_rate=-0.1):
@@ -178,21 +178,11 @@ class PatchForagingDDM_JAX:
         num_stops = jnp.sum(window_data[:, 2])
 
         def single_patch_case(_):
-            patch_times = window_data[:, 0]
-            rewards = window_data[:, 1]
-            stops = window_data[:, 2]
-            
-            # Return simplified stats for single patch
-            return jnp.concatenate([
-                jnp.array([
-                    jnp.max(patch_times), jnp.mean(patch_times), 0.0,
-                    jnp.mean(stops), 0.0, jnp.mean(rewards), 0.0,
-                ]),
-                jnp.zeros(30)  # Remaining features undefined for single patch
-            ])
+            #handles single patch gracefully now
+            return compute_summary_stats(window_data)
 
         def multi_patch_case(_):
-            return compute_enhanced_summary_stats(window_data)
+            return compute_summary_stats(window_data)
 
         summary_stats = jax.lax.cond(
             num_stops < 2, 
@@ -257,8 +247,8 @@ class PatchForagingDDM_JAX:
 def create_prior(prior_low=None, prior_high=None):
 
     if prior_low is None or prior_high is None:
-        prior_low  = jnp.array([0.0, 0.0, 0.0, 0.05])
-        prior_high = jnp.array([2,  2,  2,  0.5])
+        prior_low  = jnp.array([0.0, 0.0, 0.0, 0.0])
+        prior_high = jnp.array([2,  2,  1,  0.3])
 
     prior_low  = jnp.array(prior_low)
     prior_high = jnp.array(prior_high)

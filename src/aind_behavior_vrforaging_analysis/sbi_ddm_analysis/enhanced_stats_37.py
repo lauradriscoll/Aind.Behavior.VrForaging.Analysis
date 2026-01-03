@@ -123,9 +123,9 @@ def compute_consistency_stats(window_data):
         failure_effect             
     ])
 
-def compute_enhanced_summary_stats(window_data):
+def compute_summary_stats(window_data):
     """
-    Compute 29 rich summary statistics from simulation data.
+    Compute 37 rich summary statistics from simulation data.
     
     Features capture:
     - Basic statistics (7)
@@ -135,6 +135,7 @@ def compute_enhanced_summary_stats(window_data):
     - Sequential dependencies (3) - captures persistence
     - Reward statistics (3) - detailed reward behavior
     - Patch statistics (3) - exit behavior
+    - Consistency stats (6) - distinguish systematic effects from noise
     """
     
     # Extract columns
@@ -157,7 +158,7 @@ def compute_enhanced_summary_stats(window_data):
         _safe_std(rewards, jnp.ones_like(rewards, dtype=bool)),
     ])
     
-    # REWARD HISTORY EFFECTS (4 features) - CRITICAL FOR YOUR MODEL
+    # REWARD HISTORY EFFECTS (4 features)
     prev_rewards = jnp.roll(rewards, 1).at[0].set(0)
     first_trial_mask = jnp.arange(len(patch_times)) > 0
     after_reward_mask = valid_mask & (prev_rewards > 0) & first_trial_mask
@@ -222,7 +223,7 @@ def compute_enhanced_summary_stats(window_data):
         n_valid / jnp.maximum(jnp.sum(jnp.ones_like(stops)), 1),
     ])
 
-    # NEW: Consistency stats (6 features)
+    # Consistency stats (6 features)
     consistency_stats = compute_consistency_stats(window_data)
     
     return jnp.concatenate([
@@ -288,7 +289,7 @@ def test_enhanced_stats():
     window_data[:, 2] = np.random.binomial(1, 0.2, 100)  # stops
     
     window_data_jax = jnp.array(window_data)
-    stats = compute_enhanced_summary_stats(window_data_jax)
+    stats = compute_summary_stats(window_data_jax)
     
     print(f"✓ Enhanced stats shape: {stats.shape}")
     print(f"✓ Expected shape: (37,)") 

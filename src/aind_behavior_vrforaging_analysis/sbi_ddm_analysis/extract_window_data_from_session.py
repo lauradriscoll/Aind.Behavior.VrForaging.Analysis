@@ -57,7 +57,7 @@ def extract_window_data_from_session_by_odor(
     print(f"Excluding odors: {exclude_odors}")
     
     # Create base output directory
-    base_output_dir = session_path / 'window_data_by_odor'
+    base_output_dir = session_path / f'{window_size}_window_data_by_odor'
     base_output_dir.mkdir(exist_ok=True)
     
     # Process each odor type separately

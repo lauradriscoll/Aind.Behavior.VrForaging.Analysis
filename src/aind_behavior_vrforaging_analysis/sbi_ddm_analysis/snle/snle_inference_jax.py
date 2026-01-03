@@ -151,11 +151,7 @@ def train_snle(simulator, prior_fn,
         n_early_stopping_patience=n_early_stopping_patience,
         percentage_data_as_validation_set=percentage_data_as_validation_set
     )
-    
-    print(f"\nSNLE training complete ({mode} mode)!")
-    print(f"Trained for {len(losses)} iterations")
-    # print(f"Final loss: {losses['train_losses'][-1]:.4f}")
-    
+
     return snle, snle_params, losses, rng_key, y_mean, y_std
 
 def infer_parameters_snle(snle, 

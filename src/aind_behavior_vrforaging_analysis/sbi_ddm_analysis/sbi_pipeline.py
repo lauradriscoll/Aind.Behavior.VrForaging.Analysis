@@ -3,6 +3,7 @@ Modular SBI pipeline for VR foraging DDM parameter inference
 """
 
 import os
+
 os.environ['JAX_PLATFORMS'] = 'cpu'
 
 import numpy as np
@@ -13,6 +14,7 @@ import matplotlib.pyplot as plt
 import pickle
 
 from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_inference_jax import train_snle, infer_parameters_snle
+from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.enhanced_stats_37 import compute_summary_stats
 
 
 # ============================================================================
@@ -53,7 +55,6 @@ def train_snle_model(simulator, prior_fn, config, save_path=None):
     )
     
     model_data = {
-        'snle': snle,
         'snle_params': snle_params,
         'losses': losses,
         'y_mean': y_mean,
@@ -104,6 +105,8 @@ def validate_parameter_recovery(model_data, simulator, prior_fn, n_test=50, seed
     for i in range(n_test):
         if (i + 1) % 10 == 0:
             print(f"  Test {i+1}/{n_test}")
+
+        
         
         # Sample true parameters
         rng_key, subkey = random.split(rng_key)
@@ -117,7 +120,7 @@ def validate_parameter_recovery(model_data, simulator, prior_fn, n_test=50, seed
         # Infer parameters
         rng_key, subkey = random.split(rng_key)
         posterior_samples, rng_key = infer_parameters_snle(
-            model_data['snle'],
+            snle,
             model_data['snle_params'],
             observed_stats,
             model_data['y_mean'],
@@ -213,8 +216,7 @@ def infer_parameters_per_window(model_data, observed_windows, seed=456):
         
         # Get summary stats for this window
         window_data = jnp.array(observed_windows[i])
-        from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.enhanced_stats import compute_enhanced_summary_stats
-        observed_stats = compute_enhanced_summary_stats(window_data)
+        observed_stats = compute_summary_stats(window_data)
         
         # Infer parameters
         rng_key, subkey = random.split(rng_key)

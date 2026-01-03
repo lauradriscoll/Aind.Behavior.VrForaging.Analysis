@@ -10,6 +10,11 @@ import random as py_random
 import jax.numpy as jnp
 from jax import random
 import pandas as pd
+from sbijax import NLE
+from sbijax.nn import make_maf
+
+import pickle
+from pathlib import Path
 
 from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM_JAX, create_prior
 from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_inference_jax import train_snle, infer_parameters_snle
@@ -18,17 +23,17 @@ from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_inference_jax 
 # Focused sweep configuration
 # --------------------------
 SWEEP_CONFIG_FOCUSED = {
-    "n_simulations": [1e5, 3e5, 5e5, 7.5e5, 1e6],
+    "n_simulations": [1e5, 5e5, 1e6, 2e6],
     "learning_rate": [1e-3, 3e-4, 1e-4],
-    "hidden_dim": [64, 128, 256],
-    "num_layers": [4, 8, 12],
+    "hidden_dim": [32, 48, 64, 128],
+    "num_layers": [3, 4, 6, 8, 12],
 }
 
 # Fixed defaults for other parameters
 DEFAULT_PARAMS = {
     "n_iter": 1000,
     "patience": 30,
-    "batch_size": 512,
+    "batch_size": 256,
 }
 
 TEST_CASES = [
@@ -41,6 +46,30 @@ TEST_CASES = [
     ("high_failure", jnp.array([0.4, 0.5, 1., 0.1])),
     ("high_noise", jnp.array([0.4, 0.4, 0.4, 0.5])),
 ]
+
+# --------------------------
+# Filename setup
+# --------------------------
+def get_model_filename(config, n_features=26):
+    """
+    Create descriptive filename from config parameters
+    Format: snle_{n_sims}_{hidden_dim}h_{num_layers}l_b{batch_size}_{n_features}feat.pkl
+    Example: snle_2M_h64_l5_b256_26feat.pkl
+    """
+    n_sims = int(config['n_simulations'])
+    
+    # Format number of simulations
+    if n_sims >= 1_000_000:
+        n_sims_str = f"{n_sims // 1_000_000}M"
+    elif n_sims >= 1_000:
+        n_sims_str = f"{n_sims // 1_000}K"
+    else:
+        n_sims_str = str(n_sims)
+    
+    filename = (f"snle_{n_sims_str}_h{config['hidden_dim']}_"
+                f"l{config['num_layers']}_b{config['batch_size']}_{n_features}feat.pkl")
+    
+    return filename
 
 # --------------------------
 # Logger setup
@@ -113,7 +142,25 @@ def train_and_eval(config, results_dir, rng_key, logger):
         rng_key=train_key,
     )
 
-    logger.info(f"Training complete. Final loss: {losses}")
+    logger.info(f"Training complete. Final loss: {losses[-1] if len(losses) > 0 else 'N/A'}")
+
+    # Save the trained model
+    model_filename = get_model_filename(full_config)
+    model_path = Path(results_dir) / model_filename
+    
+    model_data = {
+        'snle_params': snle_params,
+        'losses': losses,
+        'y_mean': y_mean,
+        'y_std': y_std,
+        'config': full_config,
+    }
+    
+    with open(model_path, 'wb') as f:
+        pickle.dump(model_data, f)
+    
+    logger.info(f"Model saved: {model_filename}")
+    # ======================================
 
     results = []
     for case_name, true_theta in TEST_CASES:
@@ -122,6 +169,7 @@ def train_and_eval(config, results_dir, rng_key, logger):
         metrics.update(full_config)
         metrics["case"] = case_name
         metrics["true_theta"] = true_theta.tolist()
+        metrics["model_filename"] = model_filename  # ADD THIS LINE
         results.append(metrics)
 
     df = pd.DataFrame(results)
@@ -175,6 +223,6 @@ def run_sweep(base_dir="snle_sweep", randomized=False, max_configs=30):
 # --------------------------
 if __name__ == "__main__":
     # randomized=True to sample a subset if too many combinations
-    results_dir, results_df = run_sweep(randomized=True, max_configs=20)
+    results_dir, results_df = run_sweep(randomized=True, max_configs=25)
     print(f"Results saved to: {results_dir}")
     print(results_df[["n_simulations", "learning_rate", "hidden_dim", "case", "mae", "coverage"]])
