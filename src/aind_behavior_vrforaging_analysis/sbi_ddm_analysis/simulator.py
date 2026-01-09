@@ -14,12 +14,29 @@ import jax.numpy as jnp
 from jax import random, jit, vmap
 
 from tensorflow_probability.substrates.jax import distributions as tfd
-from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.enhanced_stats_35 import compute_summary_stats
+# from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.enhanced_stats_35 import compute_summary_stats
 
 
 def reward_probability(num_rewards, initial_prob=0.8, decay_rate=-0.1):
     """Exponential decay reward probability based on number of rewards collected"""
     return initial_prob * jnp.exp(decay_rate * num_rewards)
+
+def prepare_raw_data(window_data):
+    """
+    Prepare raw behavioral data for neural density estimation.
+    
+    Input: window_data of shape (n_sites, 3) where columns are:
+           - patch_times (continuous)
+           - rewards (binary)
+           - stops (binary)
+    
+    Output: flattened array of shape (n_sites * 3,)
+    
+    Note: Standardization happens later in the training workflow using
+    the mean and std computed across the entire training dataset.
+    """
+    # Simply flatten: (n_sites, 3) -> (n_sites * 3,)
+    return window_data.flatten()
 
 
 class PatchForagingDDM_JAX:
@@ -177,19 +194,21 @@ class PatchForagingDDM_JAX:
         # Compute number of stops
         num_stops = jnp.sum(window_data[:, 2])
 
-        def single_patch_case(_):
-            #handles single patch gracefully now
-            return compute_summary_stats(window_data)
+        summary_stats = prepare_raw_data(window_data) #just trying raw data for now
 
-        def multi_patch_case(_):
-            return compute_summary_stats(window_data)
+        # def single_patch_case(_):
+        #     #handles single patch gracefully now
+        #     return prepare_raw_data(window_data)
 
-        summary_stats = jax.lax.cond(
-            num_stops < 2, 
-            single_patch_case, 
-            multi_patch_case, 
-            operand=None
-        )
+        # def multi_patch_case(_):
+        #     return prepare_raw_data(window_data)
+
+        # summary_stats = jax.lax.cond(
+        #     num_stops < 2, 
+        #     single_patch_case, 
+        #     multi_patch_case, 
+        #     operand=None
+        # )
     
         return window_data, summary_stats
     
