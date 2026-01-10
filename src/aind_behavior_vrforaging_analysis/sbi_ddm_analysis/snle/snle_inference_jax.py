@@ -88,7 +88,7 @@ def train_snle(simulator, prior_fn,
     test_theta = prior_fn().sample(seed=test_key)
     test_x = simulator.simulator_fn(seed=test_key, theta=test_theta)
 
-    n_dim_data = test_x.shape[-1]  # should be 29
+    n_dim_data = test_x.shape[-1]  
     
     print(f"Data dimension: {n_dim_data}")
     

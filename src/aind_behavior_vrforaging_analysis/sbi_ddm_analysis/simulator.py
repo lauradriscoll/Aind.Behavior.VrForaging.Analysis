@@ -194,7 +194,7 @@ class PatchForagingDDM_JAX:
         # Compute number of stops
         num_stops = jnp.sum(window_data[:, 2])
 
-        summary_stats = prepare_raw_data(window_data) #just trying raw data for now
+        summary_stats = prepare_raw_data(window_data) #just trying raw data for now. this function just flattens
 
         # def single_patch_case(_):
         #     #handles single patch gracefully now
