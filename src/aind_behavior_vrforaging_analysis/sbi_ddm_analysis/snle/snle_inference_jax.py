@@ -51,6 +51,8 @@ def train_snle(simulator, prior_fn,
                n_early_stopping_patience=30,
                percentage_data_as_validation_set=0.1,
                learning_rate = 1e-3,
+               transistion_steps = 200,
+               decay_rate = .99,
                hidden_dim = 64,
                num_layers = 5,
                rng_key=None):
@@ -133,8 +135,8 @@ def train_snle(simulator, prior_fn,
     # learning-rate schedule
     schedule = optax.exponential_decay(
         init_value=learning_rate,      # starting LR
-        transition_steps=200, # how often to decay
-        decay_rate=0.99,      # multiplier
+        transition_steps=transition_steps, # how often to decay
+        decay_rate=decay_rate,      # multiplier
         staircase=True,
     )
 
