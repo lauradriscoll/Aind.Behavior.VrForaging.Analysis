@@ -19,7 +19,7 @@ from matplotlib.gridspec import GridSpec
 from jax import random
 import jax.numpy as jnp
 
-from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM_JAX
+from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM_JAX, create_prior
 
 
 def plot_single_window(ax, window, theta, title=None):
@@ -191,7 +191,9 @@ def plot_parameter_grid_2d(
 def plot_all_parameter_combinations(
     grid_size: int = 5,
     window_sites: int = 100,
-    save_dir: str = 'parameter_visualizations'
+    save_dir: str = 'parameter_visualizations',
+    prior_low=None,
+    prior_high=None
 ):
     """
     Create all six 2D parameter grids (all pairwise combinations).
@@ -207,6 +209,19 @@ def plot_all_parameter_combinations(
     # Ensure save directory exists
     os.makedirs(save_dir, exist_ok=True)
 
+    # Get prior bounds
+    prior_low, prior_high = create_prior(prior_low, prior_high)
+    prior_median = (prior_low + prior_high) / 2.0
+    
+    # Create parameter ranges dictionary
+    param_names = ['drift_rate', 'reward_bump', 'failure_bump', 'noise_std']
+    param_ranges = {name: (float(prior_low[i]), float(prior_high[i])) 
+                    for i, name in enumerate(param_names)}
+    
+    # Fixed parameter values (use medians)
+    fixed_values = {name: float(prior_median[i]) 
+                   for i, name in enumerate(param_names)}
+
     print("="*60)
     print("Generating Parameter Space Visualizations (4D Theta)")
     print("="*60)
@@ -216,9 +231,10 @@ def plot_all_parameter_combinations(
     plot_parameter_grid_2d(
         param1_name='drift_rate',
         param2_name='reward_bump',
-        param1_range=(0., 1.),
-        param2_range=(0., 1.),
-        fixed_params={'failure_bump': 0.3, 'noise_std': 0.05},
+        param1_range=param_ranges['drift_rate'],
+        param2_range=param_ranges['reward_bump'],
+        fixed_params={'failure_bump': fixed_values['failure_bump'], 
+                     'noise_std': fixed_values['noise_std']},
         grid_size=grid_size,
         window_sites=window_sites,
         save_path=f'{save_dir}/grid_drift_vs_reward.png'
@@ -229,9 +245,10 @@ def plot_all_parameter_combinations(
     plot_parameter_grid_2d(
         param1_name='drift_rate',
         param2_name='failure_bump',
-        param1_range=(0., 1.),
-        param2_range=(0., 1.),
-        fixed_params={'reward_bump': 0.6, 'noise_std': 0.05},
+        param1_range=param_ranges['drift_rate'],
+        param2_range=param_ranges['failure_bump'],
+        fixed_params={'reward_bump': fixed_values['reward_bump'], 
+                     'noise_std': fixed_values['noise_std']},
         grid_size=grid_size,
         window_sites=window_sites,
         save_path=f'{save_dir}/grid_drift_vs_failure.png'
@@ -242,9 +259,10 @@ def plot_all_parameter_combinations(
     plot_parameter_grid_2d(
         param1_name='drift_rate',
         param2_name='noise_std',
-        param1_range=(0., 1.),
-        param2_range=(0., 0.5),
-        fixed_params={'reward_bump': 0.6, 'failure_bump': 0.3},
+        param1_range=param_ranges['drift_rate'],
+        param2_range=param_ranges['noise_std'],
+        fixed_params={'reward_bump': fixed_values['reward_bump'], 
+                     'failure_bump': fixed_values['failure_bump']},
         grid_size=grid_size,
         window_sites=window_sites,
         save_path=f'{save_dir}/grid_drift_vs_noise.png'
@@ -255,9 +273,10 @@ def plot_all_parameter_combinations(
     plot_parameter_grid_2d(
         param1_name='reward_bump',
         param2_name='failure_bump',
-        param1_range=(0., 1.),
-        param2_range=(0., 1.),
-        fixed_params={'drift_rate': 0.2, 'noise_std': 0.05},
+        param1_range=param_ranges['reward_bump'],
+        param2_range=param_ranges['failure_bump'],
+        fixed_params={'drift_rate': fixed_values['drift_rate'], 
+                     'noise_std': fixed_values['noise_std']},
         grid_size=grid_size,
         window_sites=window_sites,
         save_path=f'{save_dir}/grid_reward_vs_failure.png'
@@ -268,9 +287,10 @@ def plot_all_parameter_combinations(
     plot_parameter_grid_2d(
         param1_name='reward_bump',
         param2_name='noise_std',
-        param1_range=(0., 1.),
-        param2_range=(0., 0.5),
-        fixed_params={'drift_rate': 0.2, 'failure_bump': 0.3},
+        param1_range=param_ranges['reward_bump'],
+        param2_range=param_ranges['noise_std'],
+        fixed_params={'drift_rate': fixed_values['drift_rate'], 
+                     'failure_bump': fixed_values['failure_bump']},
         grid_size=grid_size,
         window_sites=window_sites,
         save_path=f'{save_dir}/grid_reward_vs_noise.png'
@@ -281,9 +301,10 @@ def plot_all_parameter_combinations(
     plot_parameter_grid_2d(
         param1_name='failure_bump',
         param2_name='noise_std',
-        param1_range=(0., 1.),
-        param2_range=(0., 0.5),
-        fixed_params={'drift_rate': 0.2, 'reward_bump': 0.6},
+        param1_range=param_ranges['failure_bump'],
+        param2_range=param_ranges['noise_std'],
+        fixed_params={'drift_rate': fixed_values['drift_rate'], 
+                     'reward_bump': fixed_values['reward_bump']},
         grid_size=grid_size,
         window_sites=window_sites,
         save_path=f'{save_dir}/grid_failure_vs_noise.png'
@@ -308,10 +329,12 @@ def plot_parameter_effect_summary(
     rng_key = random.PRNGKey(42)
     
     fig, axes = plt.subplots(4, 3, figsize=(15, 16))
-    
+
+    # Get prior bounds
+    prior_low, prior_high = create_prior()
     param_names = ['drift_rate', 'reward_bump', 'failure_bump', 'noise_std']
-    param_ranges = [(0.1, 0.6), (0.0, 1.2), (0.0, 1.2), (0.05, 0.5)]
-    base_theta = np.array([0.3, 0.3, 0.3, 0.05])
+    param_ranges = list(zip(prior_low, prior_high))
+    base_theta = (prior_low + prior_high) / 2.0
     
     print("\nGenerating parameter effect summary...")
     
@@ -321,7 +344,7 @@ def plot_parameter_effect_summary(
         for i, param_val in enumerate(param_values):
             # Create theta with one parameter varied
             theta = base_theta.copy()
-            theta[param_idx] = param_val
+            theta = theta.at[param_idx].set(param_val)
             
             # Split RNG key
             rng_key, subkey = random.split(rng_key)
@@ -360,9 +383,16 @@ def plot_noise_comparison(
     
     fig, axes = plt.subplots(2, 3, figsize=(15, 8))
     axes = axes.flatten()
+
+    # Get prior bounds
+    prior_low, prior_high = create_prior()
+    prior_median = (prior_low + prior_high) / 2.0
     
-    base_theta = np.array([0.3, 0.3, 0.3, 0.0])  # Start with no noise
-    noise_levels = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
+    # Base parameters: use median for drift/bumps, zero for noise
+    base_theta = np.array([*prior_median[:3], 0.0])
+    
+    # Create 6 evenly spaced noise levels spanning the prior
+    noise_levels = np.linspace(prior_low[3], prior_high[3], 6)
     
     print("\nGenerating noise comparison...")
     

@@ -79,7 +79,7 @@ def extract_window_data_from_session_by_odor(
         print(f"  {n_sites} sites for {odor_type}")
         
         if n_sites < window_size:
-            print(f"  ⚠️  Not enough sites for {odor_type}, skipping")
+            print(f"Not enough sites for {odor_type}, skipping")
             continue
         
         # Compute patch-relative positions

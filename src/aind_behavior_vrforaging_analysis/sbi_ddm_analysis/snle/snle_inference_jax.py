@@ -48,13 +48,16 @@ def train_snle(simulator, prior_fn,
                n_simulations=10000,
                n_iter=1000,
                batch_size=100,
-               n_early_stopping_patience=30,
+               n_early_stopping_patience=10,
                percentage_data_as_validation_set=0.1,
                learning_rate = 1e-3,
                transition_steps = 200,
                decay_rate = .99,
+            #    gradient_clip_norm=None,
                hidden_dim = 64,
                num_layers = 5,
+               save_dir=None,              
+               checkpoint_every=None,
                rng_key=None):
     """
     Train SNLE to learn p(summary_stats | theta) using sbijax.
@@ -66,8 +69,16 @@ def train_snle(simulator, prior_fn,
         n_simulations: number of training samples to generate
         n_iter: maximum number of training iterations (default: 1000)
         batch_size: batch size for training (default: 100)
-        n_early_stopping_patience: patience for early stopping (default: 50)
+        n_early_stopping_patience: patience for early stopping (default: 10)
         percentage_data_as_validation_set: validation split (default: 0.1)
+        learning_rate: initial learning rate (default: 1e-3)
+        transition_steps: steps between LR decay updates (default: 200)
+        decay_rate: multiplicative decay factor (default: 0.99)
+        gradient_clip_norm: maximum gradient norm; None to disable clipping (default: 1.0)
+        hidden_dim: hidden dimension for flow layers (default: 64)
+        num_layers: number of flow layers (default: 5)
+        save_dir: directory to save checkpoints; None to disable (default: None)
+        checkpoint_every: save checkpoint every N iterations; None to disable (default: None)
         rng_key: JAX random key
     
     Returns:
@@ -140,6 +151,10 @@ def train_snle(simulator, prior_fn,
         staircase=True,
     )
 
+    # optimizer = optax.chain(
+    #     optax.clip_by_global_norm(gradient_clip_norm),  # gradient clipping prevents explosions!
+    #     optax.adam(schedule)
+    # )
     optimizer = optax.adam(schedule)
 
     rng_key, train_key = random.split(rng_key)
@@ -192,11 +207,9 @@ def infer_parameters_snle(snle,
         observed_stats = observed_stats.flatten()
 
     print("\nNormalizing observed statistics...")
-    print(f"Observed stats (raw): {observed_stats}")
     
     # NORMALIZE using training statistics
     observed_stats_normalized = (observed_stats - y_mean) / y_std
-    print(f"Observed stats (normalized): {observed_stats_normalized}")
 
     print("\nRunning MCMC inference...")
     rng_key, sample_key = random.split(rng_key)

@@ -14,12 +14,10 @@ import jax.numpy as jnp
 from jax import random, jit, vmap
 
 from tensorflow_probability.substrates.jax import distributions as tfd
-# from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.enhanced_stats_35 import compute_summary_stats
 
-
-def reward_probability(num_rewards, initial_prob=0.8, decay_rate=-0.1):
-    """Exponential decay reward probability based on number of rewards collected"""
-    return initial_prob * jnp.exp(decay_rate * num_rewards)
+def reward_probability(num_rewards, initial_prob=0.8, depletion_rate=-0.1):
+    """Exponential depletion reward probability based on number of rewards collected"""
+    return initial_prob * jnp.exp(depletion_rate * num_rewards)
 
 def prepare_raw_data(window_data):
     """
@@ -45,8 +43,8 @@ class PatchForagingDDM_JAX:
     Simulates patch foraging behavior with evidence accumulation, rewards, and patch leaving decisions.
     4 parameters:
         - drift_rate: evidence accumulation rate
-        - reward_bump: evidence boost from receiving reward
-        - failure_bump: evidence boost from not receiving reward
+        - reward_bump: evidence change from receiving reward
+        - failure_bump: evidence change from not receiving reward
         - noise_std: standard deviation of noise in evidence accumulation
     7 summary statistics:
         - max patch time
@@ -60,17 +58,18 @@ class PatchForagingDDM_JAX:
     
     def __init__(self, 
                  initial_prob=0.8, 
-                 decay_rate=-0.1,
+                 depletion_rate=-0.1,
                  threshold=1.0,
                  start_point=0.0,
                  interval_min=20.0,        # InterSite gap minimum (cm)
                  interval_scale=19.0,      # InterSite gap exponential scale (cm)
                  interval_normalization=88.58,  # For normalizing to ~1.0
                  odor_site_length=50.0,    # Physical length of OdorSite (cm)
-                 max_sites_per_window=500):
+                 max_sites_per_window=500,
+                 n_feat = 37): # determines whether input is summary stats or raw data
         
         self.initial_prob = initial_prob
-        self.decay_rate = decay_rate
+        self.depletion_rate = depletion_rate
         self.threshold = threshold
         self.start_point = start_point
         
@@ -85,10 +84,13 @@ class PatchForagingDDM_JAX:
         self.interval_scale = interval_scale / interval_normalization
         self.odor_site_length = odor_site_length / interval_normalization
         
-        self.max_sites_per_window = max_sites_per_window
+        self.max_sites_per_window = 2*max_sites_per_window
         
         # JIT compile the core simulation function
         self._simulate_one_window_jit = jit(self._simulate_one_window_core)
+
+        # determines structure of input data
+        self.n_feat = n_feat
     
     def _simulate_one_window_core(self, theta, rng_key):
         """
@@ -157,7 +159,7 @@ class PatchForagingDDM_JAX:
             should_leave = evidence >= self.threshold
             
             # If not leaving, check for reward
-            reward_prob = reward_probability(num_rewards, self.initial_prob, self.decay_rate)
+            reward_prob = reward_probability(num_rewards, self.initial_prob, self.depletion_rate)
             reward = jnp.where(should_leave, 0, (reward_sample < reward_prob).astype(jnp.float32))
             stopped = jnp.where(should_leave, 0, 1)
             
@@ -168,7 +170,7 @@ class PatchForagingDDM_JAX:
             evidence = jnp.where(
                 should_leave,
                 self.start_point,  # reset evidence if leaving
-                evidence + jnp.where(reward > 0, -reward_bump, failure_bump)
+                evidence + jnp.where(reward > 0, reward_bump, failure_bump)
             )
             
             # Update state
@@ -189,26 +191,21 @@ class PatchForagingDDM_JAX:
         
         # Run simulation
         final_state = jax.lax.while_loop(cond_fn, body_fn, init_state)
-        _, _, _, _, _, window_data = final_state
-        
-        # Compute number of stops
-        num_stops = jnp.sum(window_data[:, 2])
+        _, _, _, _, _, double_window_data = final_state
 
-        summary_stats = prepare_raw_data(window_data) #just trying raw data for now. this function just flattens
+        window_data = double_window_data[(int(self.max_sites_per_window/2)):,:]
 
-        # def single_patch_case(_):
-        #     #handles single patch gracefully now
-        #     return prepare_raw_data(window_data)
-
-        # def multi_patch_case(_):
-        #     return prepare_raw_data(window_data)
-
-        # summary_stats = jax.lax.cond(
-        #     num_stops < 2, 
-        #     single_patch_case, 
-        #     multi_patch_case, 
-        #     operand=None
-        # )
+        if self.n_feat == 300:
+            summary_stats = prepare_raw_data(window_data)
+        elif self.n_feat == 23:
+            from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.enhanced_stats_23 import compute_summary_stats
+            summary_stats = compute_summary_stats(window_data)
+        elif self.n_feat == 35:
+            from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.enhanced_stats_35 import compute_summary_stats
+            summary_stats = compute_summary_stats(window_data)
+        elif self.n_feat == 37:
+            from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.enhanced_stats_37 import compute_summary_stats
+            summary_stats = compute_summary_stats(window_data)
     
         return window_data, summary_stats
     
@@ -266,11 +263,12 @@ class PatchForagingDDM_JAX:
 def create_prior(prior_low=None, prior_high=None):
 
     if prior_low is None or prior_high is None:
-        prior_low  = jnp.array([0.0, 0.0, 0.0, 0.0])
-        prior_high = jnp.array([2,  2,  1,  0.3])
+        prior_low  = jnp.array([-.3, -1.3, -.3, 0.0])
+        prior_high = jnp.array([1.3,  .3,  1.3,  0.3])
 
     prior_low  = jnp.array(prior_low)
     prior_high = jnp.array(prior_high)
+
 
     def prior_fn():
         return tfd.JointDistributionNamed(
