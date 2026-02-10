@@ -152,13 +152,13 @@ def run_inference_and_save(model_name, odor_type='Methyl_Butyrate',
             if n_feat == 300:
                 observed_stats = prepare_raw_data(window_data)
             elif n_feat == 23:
-                from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.enhanced_stats_23 import compute_summary_stats
+                from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.feature_engineering.enhanced_stats_23 import compute_summary_stats
                 observed_stats = compute_summary_stats(window_data)
             elif n_feat == 35:
-                from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.enhanced_stats_35 import compute_summary_stats
+                from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.feature_engineering.enhanced_stats_35 import compute_summary_stats
                 observed_stats = compute_summary_stats(window_data)
             elif n_feat == 37:
-                from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.enhanced_stats_37 import compute_summary_stats
+                from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.feature_engineering.enhanced_stats_37 import compute_summary_stats
                 observed_stats = compute_summary_stats(window_data)
             else:
                 raise ValueError(f"Unsupported n_feat: {n_feat}")
@@ -211,7 +211,7 @@ def run_inference_and_save(model_name, odor_type='Methyl_Butyrate',
 if __name__ == "__main__":
     # Configuration
     MODEL_NAME = 'snle_2M_lr0.0005_ts2000_h128_l8_b256_37feat'
-    ODOR_TYPES = ['Methyl_Butyrate', 'Alpha_pinene']
+    ODOR_TYPES = ['Alpha_pinene',]#'Methyl_Butyrate'
     
     # Run inference for each odor type
     for odor_type in ODOR_TYPES:

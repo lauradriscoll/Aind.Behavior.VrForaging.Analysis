@@ -5,7 +5,7 @@ Purpose: Train neural likelihood estimator and run MCMC inference for patch-leve
 Supports both single-patch and multi-patch inference modes.
 
 Key differences from PyTorch version:
-- Uses sbijax instead of sbi
+- Uses sbijax
 - All operations in JAX (no torch tensors)
 - Functional API with explicit RNG keys
 - Faster training on CPU with JIT compilation

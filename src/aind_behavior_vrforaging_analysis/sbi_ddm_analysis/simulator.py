@@ -198,13 +198,13 @@ class PatchForagingDDM_JAX:
         if self.n_feat == 300:
             summary_stats = prepare_raw_data(window_data)
         elif self.n_feat == 23:
-            from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.enhanced_stats_23 import compute_summary_stats
+            from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.feature_engineering.enhanced_stats_23 import compute_summary_stats
             summary_stats = compute_summary_stats(window_data)
         elif self.n_feat == 35:
-            from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.enhanced_stats_35 import compute_summary_stats
+            from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.feature_engineering.enhanced_stats_35 import compute_summary_stats
             summary_stats = compute_summary_stats(window_data)
         elif self.n_feat == 37:
-            from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.enhanced_stats_37 import compute_summary_stats
+            from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.feature_engineering.enhanced_stats_37 import compute_summary_stats
             summary_stats = compute_summary_stats(window_data)
     
         return window_data, summary_stats
@@ -258,8 +258,6 @@ class PatchForagingDDM_JAX:
         x = vmap(simulate_one)(keys, theta_array)
         return x
 
-
-
 def create_prior(prior_low=None, prior_high=None):
 
     if prior_low is None or prior_high is None:
@@ -268,7 +266,6 @@ def create_prior(prior_low=None, prior_high=None):
 
     prior_low  = jnp.array(prior_low)
     prior_high = jnp.array(prior_high)
-
 
     def prior_fn():
         return tfd.JointDistributionNamed(

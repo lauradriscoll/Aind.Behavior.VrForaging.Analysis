@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 from jax import random
 import numpy as np
+from scipy.stats import gaussian_kde
 import matplotlib.pyplot as plt
 import pickle
 import os
@@ -130,87 +131,74 @@ def plot_real_synth_hist(real_data,synthetic_data):
         print(f"  Simulator: {real_data[:, i].mean():.3f} ± {real_data[:, i].std():.3f}")
     print("="*60)
 
-    
-
-def plot_posterior_pairplot(prior_low, prior_high, posterior_samples, true_theta, save_path=None):
+def pairplot(posterior_samples, true_params=None, param_names=None, figsize_per_param=2.5, grid_points=100):
     """
-    Create pairplot comparing prior and posterior distributions.
-    
-    Args:
-        prior_low: (4,) lower bounds of prior
-        prior_high: (4,) upper bounds of prior
-        posterior_samples: (N, 4) posterior samples (JAX array or numpy)
-        true_theta: (4,) true parameter values (JAX array or numpy)
-        save_path: Optional path to save figure
+    Lower-triangle corner plot with:
+    - 2D filled KDEs (off-diagonal)
+    - 1D KDEs (diagonal)
+    - Red 'X' for true parameters
     """
-    # Convert to numpy if needed
     if isinstance(posterior_samples, jnp.ndarray):
         posterior_samples = np.array(posterior_samples)
-    if isinstance(true_theta, jnp.ndarray):
-        true_theta = np.array(true_theta)
     
-    # Generate prior samples for comparison
-    prior_low_np = np.array(prior_low)
-    prior_high_np = np.array(prior_high)
-    prior_samples = np.random.uniform(prior_low_np, prior_high_np, size=(1000, 4))
+    n_params = posterior_samples.shape[1]
+    if param_names is None:
+        param_names = [f"param{i}" for i in range(n_params)]
     
-    param_names = [r"drift_rate", r"reward_bump", r"failure_bump", r"noise_std"]
-    n_params = 4
-    
-    fig, axes = plt.subplots(n_params, n_params, figsize=(12, 12))
+    fig, axes = plt.subplots(n_params, n_params, figsize=(figsize_per_param*n_params, figsize_per_param*n_params))
     
     for i in range(n_params):
         for j in range(n_params):
             ax = axes[i, j]
             
-            if i == j:
-                # Diagonal: plot marginal distributions
-                ax.hist(prior_samples[:, i], bins=30, alpha=0.5, density=True, 
-                       label='Prior', color='blue', edgecolor='black')
-                ax.hist(posterior_samples[:, i], bins=30, alpha=0.5, density=True,
-                       label='Posterior', color='orange', edgecolor='black')
-                ax.axvline(true_theta[i], color='red', linestyle='--', linewidth=2,
-                          label='True' if i == 0 else '')
-                if i == 0:
-                    ax.legend(fontsize=8)
-                ax.set_ylabel('Density', fontsize=10)
-                
-            elif i > j:
-                # Lower triangle: scatter plots
-                ax.scatter(prior_samples[:, j], prior_samples[:, i], 
-                          alpha=0.3, s=5, color='blue', label='Prior')
-                ax.scatter(posterior_samples[:, j], posterior_samples[:, i],
-                          alpha=0.3, s=5, color='orange', label='Posterior')
-                ax.plot(true_theta[j], true_theta[i], 'r*', markersize=15,
-                       label='True')
-                
-            else:
-                # Upper triangle: hide
+            # Only fill lower triangle
+            if i < j:
                 ax.axis('off')
+                continue
             
-            # Labels
-            if i == n_params - 1:
-                ax.set_xlabel(param_names[j], fontsize=10)
+            # Diagonal: 1D KDE
+            if i == j:
+                data = posterior_samples[:, i]
+                kde = gaussian_kde(data)
+                x_grid = np.linspace(data.min(), data.max(), grid_points)
+                ax.fill_between(x_grid, kde(x_grid), color="skyblue")
+                
+                if true_params is not None:
+                    ax.axvline(true_params[i], color='red', linestyle='--', lw=1)
+            
+            # Off-diagonal: 2D KDE
             else:
+                x = posterior_samples[:, j]
+                y = posterior_samples[:, i]
+                xy = np.vstack([x, y])
+                kde = gaussian_kde(xy)
+                x_grid = np.linspace(x.min(), x.max(), grid_points)
+                y_grid = np.linspace(y.min(), y.max(), grid_points)
+                X, Y = np.meshgrid(x_grid, y_grid)
+                Z = kde(np.vstack([X.ravel(), Y.ravel()])).reshape(X.shape)
+                ax.contourf(X, Y, Z, levels=20, cmap="Blues")
+                
+                if true_params is not None:
+                    ax.scatter(true_params[j], true_params[i], c='red', s=50, marker='X', label='True')
+            
+            # Only label left and bottom axes
+            if i < n_params - 1:
                 ax.set_xticklabels([])
-            
-            if j == 0 and i != j:
-                ax.set_ylabel(param_names[i], fontsize=10)
-            elif i != j:
+            else:
+                ax.set_xlabel(param_names[j])
+            if j > 0:
                 ax.set_yticklabels([])
-            
-            ax.grid(True, alpha=0.3)
+            else:
+                ax.set_ylabel(param_names[i])
     
-    plt.suptitle('SNLE: Prior vs Posterior', fontsize=14, fontweight='bold')
+    # Add a legend in the top-left subplot
+    handles = []
+    if true_params is not None:
+        handles.append(plt.Line2D([0], [0], marker='X', color='w', markerfacecolor='red', markersize=8, label='True'))
+    axes[0, 1].legend(handles=handles, loc='upper left')
+    
     plt.tight_layout()
-    
-    if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"Pairplot saved to {save_path}")
-    else:
-        plt.show()
-    
-    plt.close()
+    plt.show()
 
 
 def compare_snle_vs_simulator(simulator, true_theta, posterior_samples, 
@@ -455,7 +443,7 @@ def print_inference_summary(posterior_samples, true_theta):
     print(f"{'='*60}\n")
 
 
-def save_snle_model(snle_params, y_mean, y_std, mode='multi', base_dir='snle_models'):
+def save_model(snle_params, y_mean, y_std, mode='multi', base_dir='snle_models'):
     """
     Save trained SNLE model and normalization parameters in timestamped folder.
     
@@ -502,83 +490,144 @@ def save_snle_model(snle_params, y_mean, y_std, mode='multi', base_dir='snle_mod
     return model_dir
 
 
-def load_snle_model(model_dir):
+def load_model(model_path):
     """
-    Load trained SNLE parameters and normalization from timestamped folder.
+    Load a trained SNLE model and reconstruct all necessary components.
     
-    Note: This loads parameters only. You need to recreate the SNLE object
-    with the same prior and simulator, then use these parameters.
+    Parameters
+    ----------
+    model_path : Path
+        Path to model.pkl file or directory containing model.pkl
     
-    Args:
-        model_dir: Path to model directory (e.g., 'snle_models/multi_patch_20241107_143022')
+    Returns
+    -------
+    dict with keys:
+        - snle : NLE (Reconstructed SNLE model)
+        - snle_params : dict (Trained model parameters)
+        - y_mean : array (Normalization mean)
+        - y_std : array (Normalization std)
+        - config : dict (Model configuration)
+        - simulator : PatchForagingDDM_JAX (Simulator instance)
+        - prior_fn : callable (Prior distribution function)
+        - model_dir : Path (Model directory path)
+    """
+    from sbijax import NLE
+    from sbijax.nn import make_maf
+    from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM_JAX, create_prior
+    
+    # Handle both file and directory paths
+    if model_path.is_dir():
+        model_file = model_path / "model.pkl"
+        model_dir = model_path
+    else:
+        model_file = model_path
+        model_dir = model_path.parent
+    
+    if not model_file.exists():
+        raise FileNotFoundError(f"Model file not found: {model_file}")
+    
+    print(f"Loading model from {model_file}")
+    
+    with open(model_file, 'rb') as f:
+        model_data = pickle.load(f)
+    
+    config = model_data['config']
+    
+    # Reconstruct simulator
+    simulator = PatchForagingDDM_JAX(
+        initial_prob=0.8,
+        depletion_rate=-0.1,
+        threshold=1.0,
+        start_point=0.0,
+        interval_min=config['interval_min'],
+        interval_scale=config['interval_scale'],
+        interval_normalization=config['interval_normalization'],
+        odor_site_length=config['odor_site_length'],
+        max_sites_per_window=config['window_size'],
+        n_feat=config['n_feat']
+    )
+    
+    # Reconstruct prior
+    prior_fn = create_prior(
+        prior_low=jnp.array(config['prior_low']),
+        prior_high=jnp.array(config['prior_high'])
+    )
+    
+    # Reconstruct SNLE architecture
+    rng_key = random.PRNGKey(config['seed'])
+    rng_key, test_key = random.split(rng_key)
+    test_theta = prior_fn().sample(seed=test_key)
+    test_x = simulator.simulator_fn(seed=test_key, theta=test_theta)
+    n_features = test_x.shape[-1]
+    
+    flow = make_maf(
+        n_dimension=n_features,
+        n_layers=config['num_layers'],
+        hidden_sizes=(config['hidden_dim'], config['hidden_dim']),
+    )
+    
+    snle = NLE((prior_fn, simulator.simulator_fn), flow)
+    
+    print("✓ Model loaded successfully")
+    print(f"  Features: {n_features}")
+    print(f"  Architecture: {config['num_layers']} layers × {config['hidden_dim']} hidden units")
+    
+    return {
+        'snle': snle,
+        'snle_params': model_data['snle_params'],
+        'y_mean': model_data['y_mean'],
+        'y_std': model_data['y_std'],
+        'config': config,
+        'simulator': simulator,
+        'prior_fn': prior_fn,
+        'model_dir': model_dir
+    }
+
+def get_model_directory(config, make_dir = False):
+    """
+    Create descriptive directory name from config parameters and handle duplicates.
+    
+    Example output: snle_2M_lr0.0001_ts200_h128_l8_b2048_23feat/
+    If exists, creates: snle_2M_lr0.0001_ts200_h128_l8_b2048_23feat_1/
     
     Returns:
-        snle_params: Trained parameters dict
-        mode: 'single' or 'multi'
-        analysis_dir: Path to analysis folder
+        model_dir: Path to model directory
+        checkpoint_dir: Path to checkpoint subdirectory
     """
+    n_sims = config['n_simulations']
+    hidden_dim = config['hidden_dim']
+    num_layers = config['num_layers']
+    batch_size = config['batch_size']
+    learning_rate = config['learning_rate']
+    transition_steps = config['transition_steps']
+    n_feat = config['n_feat']
+    base_output_dir = config['base_output_dir']
     
-    params_path = os.path.join(model_dir, 'params.pkl')
-    analysis_dir = os.path.join(model_dir, 'analysis')
+    # Format number of simulations nicely
+    if n_sims >= 1_000_000:
+        n_sims_str = f"{n_sims // 1_000_000}M"
+    elif n_sims >= 1_000:
+        n_sims_str = f"{n_sims // 1_000}K"
+    else:
+        n_sims_str = str(n_sims)
     
-    if not os.path.exists(params_path):
-        raise FileNotFoundError(f"Parameters not found at {params_path}")
+    # Create base directory name
+    base_name = f"snle_{n_sims_str}_lr{learning_rate}_ts{transition_steps}_h{hidden_dim}_l{num_layers}_b{batch_size}_{n_feat}feat"
     
-    with open(params_path, 'rb') as f:
-        model_dict = pickle.load(f)
+    # Handle duplicates by adding _0, _1, _2, etc.
+    model_dir = base_output_dir / base_name
+    if make_dir == True:
+        counter = 0
+        while model_dir.exists() and any(model_dir.iterdir()):  # Check if folder exists AND has files
+            model_dir = base_output_dir / f"{base_name}_{counter}"
+            counter += 1
     
-    print(f"SNLE parameters loaded from: {model_dir}")
-    print(f"  - Mode: {model_dict['mode']}")
-    print(f"  - Timestamp: {model_dict['timestamp']}")
-    print(f"  - Analysis folder: {analysis_dir}")
-    print(f"\n⚠️  Remember to recreate SNLE object with same prior/simulator")
+    # Create model directory and checkpoint subdirectory
+    model_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_dir = model_dir / "checkpoints"
+    checkpoint_dir.mkdir(exist_ok=True)
     
-    return (model_dict, analysis_dir)
-
-
-# # Test
-# if __name__ == "__main__":
-
-#     from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM_JAX, create_prior_jax
-#     from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.archive.snle_inference import infer_parameters_snle
-
-#     model_dir = 'snle_models/multi_patch_20241107_143022'  # Example path
-#     snle_params, mode, analysis_dir = load_snle_model(model_dir)
-#     print("Testing SNLE utilities (JAX version)...")
+    print(f"Model directory: {model_dir}")
+    print(f"Checkpoint directory: {checkpoint_dir}")
     
-#     true_theta = jnp.array([0.6, 0.8, 0.3, 0.05])
-#     rng = random.PRNGKey(0)
-
-#     rng_key, test_key = random.split(rng_key)
-#     test_theta = prior_fn().sample(seed=test_key)
-#     test_x = simulator.simulator_fn(test_theta, test_key)
-
-#     # Create MAF with appropriate dimension
-#     n_dim_data = test_x.shape[-1]  # should be 7
-#     neural_network = make_maf(n_dimension=n_dim_data)
-    
-#     # --- 4. Create SNLE model ---
-#     fns = prior_fn, simulator.simulator_fn
-#     snle = NLE(fns, neural_network) #oddly this is what SNLE is called in sbijax - https://sbijax.readthedocs.io/en/latest/sbijax.html#sbijax.NLE
-#     snle_params = snle_params
-
-#     posterior_samples, rng_key = infer_parameters_snle(
-#         snle,
-#         snle_params,
-#         observed_stats,
-#         num_samples=100,  # Small for testing
-#         num_warmup=50,
-#         num_chains=2,
-#         rng_key=subkey
-#     )
-    
-#     print("\n1. Testing training history plot...")
-#     plot_training_history(training_history, mode='multi')
-    
-#     print("\n2. Testing posterior distributions plot...")
-#     plot_posterior_distributions(posterior_samples, true_theta)
-    
-#     print("\n3. Testing inference summary...")
-#     print_inference_summary(posterior_samples, true_theta)
-    
-#     print("\n✓ All utility tests passed!")
+    return model_dir, checkpoint_dir
