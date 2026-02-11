@@ -1,128 +1,123 @@
-# Clean Patch Foraging SBI Inference
+# SBI-DDM Analysis for VR Foraging
 
-Simplified, readable implementation of SBI inference for patch foraging DDM.
+Simulation-based inference (SBI) using drift-diffusion models (DDM) to infer parameters from mouse patch foraging behavior in VR.
 
-## File Structure (4 core files, ~400 lines total)
+## Overview
 
-```
-simulator.py    # Simulate behavior (150 lines)
-features.py           # Extract features from windows (100 lines)  
-inference.py          # Train SBI and infer parameters (100 lines)
-validation.py         # Diagnostics and metrics (150 lines)
-experiments.py        # Run experiments (100 lines)
+This package uses Sequential Neural Likelihood Estimation (SNLE) to infer cognitive parameters from behavioral data. The drift-diffusion model simulates evidence accumulation for patch-leaving decisions, and SNLE learns the mapping from behavioral summary statistics to model parameters.
+
+**Key parameters:**
+- `drift_rate`: evidence accumulation rate toward leaving
+- `reward_bump`: evidence drop after receiving reward
+- `failure_bump`: evidence boost after not receiving reward  
+- `noise_std`: standard deviation of accumulation noise
+
+## Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/AllenNeuralDynamics/Aind.Behavior.VrForaging.Analysis.git
+cd Aind.Behavior.VrForaging.Analysis
+git checkout sbi-ddm-analysis
+
+# Create conda environment
+conda env create -f environment_sbi.yml
+conda activate sbi
 ```
 
 ## Quick Start
 
-### Train and Test
+See `snle/notebooks/sbi_ddm_pipeline_demo.ipynb` for a complete example workflow:
+
+1. Train SNLE model on simulated data (or load pretrained model)
+2. Infer parameters from real behavioral data
+3. Validate parameter recovery
+
+## Repository Structure
+
+```
+├── aind_behavior_vrforaging_analysis/
+│   └── sbi_ddm_analysis/
+│       ├── snle/
+│       │   ├── notebooks/              # Analysis notebooks
+│       │   │   ├── sbi_ddm_pipeline_demo.ipynb
+│       │   │   ├── compare_priors_to_data.ipynb
+│       │   │   ├── plot_data_posteriors.ipynb
+│       │   │   └── ...
+│       │   ├── archive/                # Previous versions
+│       │   ├── snle_inference_jax.py   # Core training/inference
+│       │   ├── snle_utils_jax.py       # Utilities
+│       │   └── run_inference_save_posteriors.py
+│       ├── feature_engineering/
+│       │   └── enhanced_stats_37.py    # 37 behavioral summary statistics
+│       ├── simulator.py                # Drift-diffusion simulator
+│       ├── validation.py               # Parameter recovery validation
+│       └── window_data_from_session.py # Data preprocessing
+├── environment_sbi.yml
+├── requirements.txt
+└── README.md
+```
+
+## Summary Statistics
+
+The model uses 37 behavioral features capturing:
+- Basic statistics (mean/std of times, stops, rewards)
+- Reward history effects (time after reward vs failure)
+- Temporal dynamics (early vs late trials)
+- Distribution shape (percentiles, IQR)
+- Sequential dependencies (autocorrelations)
+- Consistency metrics (signal-to-noise, variability)
+
+See `feature_engineering/enhanced_stats_37.py` for implementation details.
+
+## Usage
+
+### Training a new model
 
 ```python
-from simulator import PatchForagingDDM, create_prior
-from inference import train_sbi, infer_parameters
+from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.simulator import PatchForagingDDM_JAX, create_prior
+from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_inference_jax import train_snle
 
-# Train
-simulator = PatchForagingDDM()
-prior = create_prior()
-posterior = train_sbi(simulator, prior, num_simulations=50000)
+simulator = PatchForagingDDM_JAX(max_sites_per_window=100, n_feat=37)
+prior_fn = create_prior()
 
-# Infer on new data
-test_window = simulator.simulate_with_random_walk(test_theta, window_sites=100)
-samples = infer_parameters(posterior, test_window, num_samples=1000)
+snle, snle_params, losses, rng_key, y_mean, y_std = train_snle(
+    simulator,
+    prior_fn,
+    mode='multi',
+    n_simulations=2_000_000,
+    n_iter=1000,
+    batch_size=256,
+    rng_key=rng_key
+)
 ```
 
-### Run Experiments
-
-```bash
-# Quick test (5K simulations)
-python experiments.py quick
-
-# Full pipeline (50K simulations + validation)
-python experiments.py full
-
-# Default (50K simulations)
-python experiments.py
-```
-
-## Data Flow
-
-```
-1. Simulator generates behavior
-   window = simulator.simulate_with_random_walk(theta, 100)  # → (100, 3)
-
-2. Extract features
-   features = extract_features(window)  # → (611,)
-
-3. Train posterior
-   posterior = train_sbi(simulator, prior, 50000)
-
-4. Infer parameters
-   samples = infer_parameters(posterior, window)  # → (1000, 3)
-```
-
-## Features Extracted (611 total)
-
-```
-Original data (flattened):      300
-Inter-site intervals:           100  ← Key for drift_rate
-Cumulative rewards per patch:   100  ← Tracks reward probability
-Failure run lengths:            100  ← Isolates failure bump
-Summary statistics:              11  ← Robust aggregates
-```
-
-## Running Validation
+### Running inference
 
 ```python
-from validation import run_sbc, print_correlations, plot_pairplot
+from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.snle.snle_inference_jax import infer_parameters_snle
 
-# Check calibration
-ranks = run_sbc(simulator, prior, posterior, num_tests=50)
-
-# Check parameter separation
-test_window = simulator.simulate_with_random_walk(theta, 100)
-samples = infer_parameters(posterior, test_window)
-print_correlations(samples)  # Want r < 0.5 for drift ↔ reward
-plot_pairplot(samples, true_theta=theta, save_path='pairplot.png')
+posterior_samples, diagnostics = infer_parameters_snle(
+    snle,
+    snle_params,
+    observed_stats,
+    y_mean, y_std,
+    num_samples=1000,
+    num_warmup=500,
+    num_chains=4,
+    rng_key=rng_key
+)
 ```
 
-## Testing
+## Requirements
 
-Each module is self-contained and testable:
+- JAX (CPU backend on Apple Silicon)
+- sbijax
+- NumPyro (for MCMC sampling)
+- See `environment_sbi.yml` for complete dependencies
 
-```bash
-python features.py        # Test feature extraction
-python inference.py       # Test SBI training
-python validation.py      # Test diagnostics
-python simulator.py       # Test simulator
-```
+## Notes
 
-## Common Tasks
-
-### Generate training data
-```python
-from inference import generate_training_data
-thetas, features = generate_training_data(simulator, prior, 10000)
-```
-
-### Check if parameters are identifiable
-```python
-from validation import print_correlations
-# After getting posterior samples:
-print_correlations(samples)  # Shows correlation matrix
-```
-
-### Validate recovery
-```python
-from validation import run_sbc
-ranks = run_sbc(simulator, prior, posterior, num_tests=50)
-# Ranks should be ~uniform if well-calibrated
-```
-
-## Key Result to Check
-
-After training, check the correlation between `drift_rate` and `reward_bump`:
-
-```python
-samples = infer_parameters(posterior, test_window, num_samples=2000)
-corr_matrix = np.corrcoef(samples.numpy().T)
-print(f"drift ↔ reward correlation: {corr_matrix[0, 1]:.3f}")
-```
+- The code is configured to use CPU backend on Apple Silicon to avoid Metal issues
+- Training on 2M simulations takes several hours
+- Checkpoints are saved during training for recovery (not working atm)
