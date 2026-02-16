@@ -23,19 +23,22 @@ def reward_probability(num_rewards, initial_prob=0.8, depletion_rate=-0.1, min_p
         prob = jnp.minimum(prob, max_prob)
     return prob
 
-def interval_duration(key_intervals, self):
+def interval_duration(key_intervals, self, n_samples=None):
     """Sample InterSite interval duration from an exponential distribution with given parameters"""
-    # Proper truncated exponential sampling using inverse CDF
     # Sample uniform [0, 1]
-    u = random.uniform(key_intervals, shape=(self.max_sites_per_window,))
+    u = random.uniform(key_intervals, shape=(max(self.max_sites_per_window, n_samples) if n_samples is not None else self.max_sites_per_window,))
 
-    # Parameters for truncated exponential
-    rate = 1.0 / self.interval_scale  # λ = 1/scale
-    truncation_range = self.interval_max - self.interval_min  # b - a
+    # Use RAW parameters for correct distribution shape
+    rate = 1.0 / self.interval_scale_raw  # λ = 1/20 = 0.05
+    truncation_range = self.interval_max_raw - self.interval_min_raw  # 100 - 20 = 80
 
-    # Inverse CDF: x = -log(1 - u*(1 - exp(-λ*range))) / λ
+    # Inverse CDF: x = a - (1/λ) * log(1 - u*(1 - exp(-λ*(b-a))))
     exp_term = jnp.exp(-rate * truncation_range)
-    intersite_gaps = self.interval_min - (1.0 / rate) * jnp.log(1.0 - u * (1.0 - exp_term))
+    intersite_gaps_raw = self.interval_min_raw - (1.0 / rate) * jnp.log(1.0 - u * (1.0 - exp_term))
+    
+    # Now normalize for use in simulation
+    intersite_gaps = intersite_gaps_raw / self.interval_normalization
+    
     return intersite_gaps
 
 def prepare_raw_data(window_data):
@@ -88,6 +91,7 @@ class PatchForagingDDM_JAX:
                  interval_normalization=88.58,  # For normalizing to ~1.0
                  odor_site_length=50.0,    # Physical length of OdorSite (cm)
                  max_sites_per_window=500,
+                 output_units='distance',   # 'distance' or 'time' - determines how evidence accumulation is scaled
                  n_feat = 37): # determines whether input is summary stats or raw data
         
         self.initial_prob = initial_prob
@@ -103,6 +107,7 @@ class PatchForagingDDM_JAX:
         self.interval_scale_raw = interval_scale
         self.interval_normalization = interval_normalization
         self.odor_site_length_raw = odor_site_length
+        self.output_units = output_units 
         
         # Normalized interval parameters (for simulation)
         self.interval_min = interval_min / interval_normalization
@@ -218,6 +223,10 @@ class PatchForagingDDM_JAX:
 
         window_data = double_window_data[(int(self.max_sites_per_window/2)):,:]
 
+        # Convert to output units (cm) to match real data format
+        if self.output_units == 'distance':
+            window_data = window_data.at[:, 0].multiply(self.interval_normalization)
+
         if self.n_feat == 300:
             summary_stats = prepare_raw_data(window_data)
         elif self.n_feat == 23:
@@ -229,7 +238,7 @@ class PatchForagingDDM_JAX:
         elif self.n_feat == 37:
             from aind_behavior_vrforaging_analysis.sbi_ddm_analysis.feature_engineering.enhanced_stats_37 import compute_summary_stats
             summary_stats = compute_summary_stats(window_data)
-    
+
         return window_data, summary_stats
     
     def simulate_one_window(self, theta, rng_key):
