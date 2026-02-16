@@ -100,7 +100,8 @@ def compute_consistency_stats(window_data):
     within_failure_var = _safe_std(patch_times, after_failure_mask) ** 2
     within_context_variance = (within_reward_var + within_failure_var) / 2
     
-    signal_to_noise = between_context_variance / jnp.maximum(within_context_variance, 1e-8)
+    raw_snr = between_context_variance / jnp.maximum(within_context_variance, 1e-8)
+    signal_to_noise = jnp.clip(raw_snr, 0.0, 10.0)
 
     # Explicit directional effects
     mean_after_reward = _safe_mean(patch_times, after_reward_mask)
