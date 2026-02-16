@@ -15,9 +15,28 @@ from jax import random, jit, vmap
 
 from tensorflow_probability.substrates.jax import distributions as tfd
 
-def reward_probability(num_rewards, initial_prob=0.8, depletion_rate=-0.1):
-    """Exponential depletion reward probability based on number of rewards collected"""
-    return initial_prob * jnp.exp(depletion_rate * num_rewards)
+def reward_probability(num_rewards, initial_prob=0.8, depletion_rate=-0.1, min_prob=0.0, max_prob=None):
+    """Exponential depletion with optional bounds"""
+    prob = initial_prob * jnp.exp(depletion_rate * num_rewards)
+    prob = jnp.maximum(prob, min_prob)
+    if max_prob is not None:
+        prob = jnp.minimum(prob, max_prob)
+    return prob
+
+def interval_duration(key_intervals, self):
+    """Sample InterSite interval duration from an exponential distribution with given parameters"""
+    # Proper truncated exponential sampling using inverse CDF
+    # Sample uniform [0, 1]
+    u = random.uniform(key_intervals, shape=(self.max_sites_per_window,))
+
+    # Parameters for truncated exponential
+    rate = 1.0 / self.interval_scale  # λ = 1/scale
+    truncation_range = self.interval_max - self.interval_min  # b - a
+
+    # Inverse CDF: x = -log(1 - u*(1 - exp(-λ*range))) / λ
+    exp_term = jnp.exp(-rate * truncation_range)
+    intersite_gaps = self.interval_min - (1.0 / rate) * jnp.log(1.0 - u * (1.0 - exp_term))
+    return intersite_gaps
 
 def prepare_raw_data(window_data):
     """
@@ -59,10 +78,13 @@ class PatchForagingDDM_JAX:
     def __init__(self, 
                  initial_prob=0.8, 
                  depletion_rate=-0.1,
+                 min_prob=0.0, 
+                 max_prob=None,
                  threshold=1.0,
                  start_point=0.0,
                  interval_min=20.0,        # InterSite gap minimum (cm)
-                 interval_scale=19.0,      # InterSite gap exponential scale (cm)
+                 interval_max=100.0,        # InterSite gap maximum (cm)
+                 interval_scale=20.0,      # InterSite gap exponential scale (cm)
                  interval_normalization=88.58,  # For normalizing to ~1.0
                  odor_site_length=50.0,    # Physical length of OdorSite (cm)
                  max_sites_per_window=500,
@@ -70,17 +92,21 @@ class PatchForagingDDM_JAX:
         
         self.initial_prob = initial_prob
         self.depletion_rate = depletion_rate
+        self.min_prob = min_prob
+        self.max_prob = max_prob
         self.threshold = threshold
         self.start_point = start_point
         
         # Store interval parameters (raw, in cm)
         self.interval_min_raw = interval_min
+        self.interval_max_raw = interval_max
         self.interval_scale_raw = interval_scale
         self.interval_normalization = interval_normalization
         self.odor_site_length_raw = odor_site_length
         
         # Normalized interval parameters (for simulation)
         self.interval_min = interval_min / interval_normalization
+        self.interval_max = interval_max / interval_normalization
         self.interval_scale = interval_scale / interval_normalization
         self.odor_site_length = odor_site_length / interval_normalization
         
@@ -114,11 +140,8 @@ class PatchForagingDDM_JAX:
         key_intervals, key_noise, key_rewards = random.split(rng_key, 3)
         
         # Pre-generate InterSite gaps (NOT full inter-odor spacing)
-        # These are the gaps between decision points
-        intersite_gaps = self.interval_min + random.exponential(
-            key_intervals,
-            shape=(self.max_sites_per_window,)
-        ) * self.interval_scale
+        # These are the gaps between decision points so they include the OdorSite length for all but the first site
+        intersite_gaps = interval_duration(key_intervals, self)
         
         noise_samples = random.normal(key_noise, shape=(self.max_sites_per_window,))
         reward_samples = random.uniform(key_rewards, shape=(self.max_sites_per_window,))
@@ -159,7 +182,7 @@ class PatchForagingDDM_JAX:
             should_leave = evidence >= self.threshold
             
             # If not leaving, check for reward
-            reward_prob = reward_probability(num_rewards, self.initial_prob, self.depletion_rate)
+            reward_prob = reward_probability(num_rewards, self.initial_prob, self.depletion_rate, self.min_prob, self.max_prob)
             reward = jnp.where(should_leave, 0, (reward_sample < reward_prob).astype(jnp.float32))
             stopped = jnp.where(should_leave, 0, 1)
             
